@@ -132,6 +132,7 @@ button, a, input, select, textarea { -webkit-tap-highlight-color: transparent; }
   border-bottom: 1px solid color-mix(in srgb, var(--border) 75%, transparent);
   background: color-mix(in srgb, var(--background) 86%, transparent); backdrop-filter: blur(18px);
 }
+.search-shell { position: relative; }
 .search-box {
   width: min(480px, 44vw); height: 42px; display: flex; align-items: center; gap: 10px; padding: 0 13px;
   border: 1px solid var(--border); border-radius: 13px; color: var(--muted-foreground); background: var(--card);
@@ -139,6 +140,12 @@ button, a, input, select, textarea { -webkit-tap-highlight-color: transparent; }
 }
 .search-box input { width: 100%; border: 0; outline: 0; color: var(--foreground); background: transparent; font-size: 12px; }
 .search-box kbd { padding: 3px 7px; border: 1px solid var(--border); border-radius: 6px; color: var(--muted-foreground); background: var(--muted); font-size: 9px; white-space: nowrap; }
+.search-results { position: absolute; top: 49px; right: 0; left: 0; z-index: 50; padding: 7px; border: 1px solid var(--border); border-radius: 13px; background: var(--card); box-shadow: 0 20px 45px #11271e24; }
+.search-results button { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px; border: 0; border-radius: 9px; color: var(--foreground); background: transparent; text-align: left; }
+.search-results button:hover { background: var(--muted); }
+.search-results span { overflow: hidden; font-size: 10px; font-weight: 750; text-overflow: ellipsis; white-space: nowrap; }
+.search-results small { color: var(--muted-foreground); font-size: 8px; }
+.search-results p { margin: 0; padding: 12px; color: var(--muted-foreground); font-size: 9px; text-align: center; }
 .topbar-actions { display: flex; align-items: center; gap: 9px; margin-left: auto; }
 .icon-button {
   width: 42px; height: 42px; display: grid; place-items: center; border: 1px solid var(--border); border-radius: 13px;
@@ -316,6 +323,58 @@ tbody tr:hover { background: color-mix(in srgb, var(--muted) 45%, transparent); 
 .loading-state { min-height: 150px; display: grid; place-items: center; color: var(--muted-foreground); font-size: 10px; }
 .compact-bars { margin-top: 10px; }
 
+.auth-screen { min-height: 100vh; display: grid; place-items: center; padding: 24px; background: radial-gradient(circle at 50% 15%, #f5ead6 0, var(--background) 48%, #e6efe9 100%); }
+.dark .auth-screen { background: radial-gradient(circle at 50% 15%, #3a3328 0, var(--background) 50%, #16221d 100%); }
+.auth-card { width: min(100%, 470px); display: flex; flex-direction: column; align-items: center; padding: 42px; border: 1px solid var(--border); border-radius: 28px; background: color-mix(in srgb, var(--card) 94%, transparent); box-shadow: 0 26px 90px #1833271c; text-align: center; }
+.auth-brand { display: flex; align-items: center; gap: 10px; font-family: var(--font-fraunces); font-size: 18px; font-weight: 650; }
+.auth-icon { width: 66px; height: 66px; display: grid; place-items: center; margin: 34px 0 22px; border-radius: 21px; color: var(--primary); background: var(--secondary); }
+.auth-card h1 { max-width: 370px; margin: 8px 0 13px; font-family: var(--font-fraunces); font-size: 36px; line-height: 1.05; letter-spacing: -.035em; }
+.auth-card > p:not(.eyebrow) { max-width: 360px; margin: 0; color: var(--muted-foreground); font-size: 12px; line-height: 1.65; }
+.auth-button { width: 100%; height: 48px; display: flex; align-items: center; justify-content: center; gap: 9px; margin-top: 26px; border-radius: 13px; color: var(--primary-foreground); background: var(--primary); font-size: 12px; font-weight: 750; }
+.auth-card > small { margin-top: 15px; color: var(--muted-foreground); font-size: 9px; }
+.loading-auth { gap: 14px; }
+.loading-auth p { color: var(--muted-foreground); font-size: 11px; }
+
+.cost-preview { display: flex; align-items: center; gap: 9px; padding: 11px 12px; border-radius: 11px; color: #35634d; background: #e7f0eb; font-size: 9px; line-height: 1.45; }
+.dark .cost-preview { color: #acd0bc; background: #243a30; }
+.responsive-header { gap: 12px; flex-wrap: wrap; }
+.stock-alert { display: flex; align-items: center; gap: 5px; padding: 6px 9px; border-radius: 999px; color: #9b5d24; background: #fff0d8; font-size: 8px; font-weight: 800; }
+.category-filters { display: flex; gap: 6px; margin: 16px 0 4px; padding-bottom: 4px; overflow-x: auto; scrollbar-width: none; }
+.category-filters button { flex: none; padding: 7px 10px; border: 1px solid var(--border); border-radius: 999px; color: var(--muted-foreground); background: var(--background); font-size: 8px; font-weight: 700; }
+.category-filters button.active { color: var(--primary-foreground); border-color: var(--primary); background: var(--primary); }
+.stock-pill { display: inline-flex; align-items: center; gap: 4px; padding: 5px 7px; border-radius: 999px; color: #34725a; background: #e1efe7; font-size: 8px; font-weight: 750; white-space: nowrap; }
+.stock-pill.low { color: #9b5d24; background: #fff0d8; }
+
+.recipe-layout { grid-template-columns: minmax(430px, 1fr) minmax(0, 1.2fr); }
+.ingredient-builder { display: flex; flex-direction: column; gap: 8px; padding: 13px; border: 1px solid var(--border); border-radius: 14px; background: var(--muted); }
+.builder-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 2px; }
+.builder-heading > div { display: flex; flex-direction: column; gap: 3px; }
+.builder-heading span { font-size: 10px; font-weight: 800; }
+.builder-heading small { color: var(--muted-foreground); font-size: 8px; }
+.builder-heading button { display: flex; align-items: center; gap: 5px; padding: 7px 9px; border: 0; border-radius: 9px; color: var(--primary-foreground); background: var(--primary); font-size: 8px; font-weight: 750; }
+.builder-heading button:disabled { opacity: .45; }
+.builder-empty { min-height: 70px; display: flex; align-items: center; justify-content: center; gap: 8px; color: var(--muted-foreground); font-size: 9px; text-align: center; }
+.builder-row { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(100px, .7fr) auto auto; align-items: end; gap: 7px; padding: 9px; border: 1px solid var(--border); border-radius: 11px; background: var(--card); }
+.builder-row label span { font-size: 8px; }
+.builder-row select, .builder-row input { min-height: 38px; padding: 8px; font-size: 10px; }
+.builder-row > strong { min-width: 60px; padding-bottom: 12px; color: var(--primary); font-size: 9px; text-align: right; }
+.builder-row > button { width: 34px; height: 38px; display: grid; place-items: center; border: 1px solid var(--border); border-radius: 9px; color: var(--destructive); background: var(--background); }
+.recipe-cost-summary { display: grid; grid-template-columns: repeat(3, 1fr); gap: 7px; }
+.recipe-cost-summary span { display: flex; flex-direction: column; padding: 10px; border: 1px solid var(--border); border-radius: 11px; background: var(--background); }
+.recipe-cost-summary small { color: var(--muted-foreground); font-size: 7px; }
+.recipe-cost-summary strong { margin-top: 5px; font-size: 11px; }
+.recipe-cost-summary .featured { color: var(--primary-foreground); border-color: var(--primary); background: var(--primary); }
+.recipe-cost-summary .featured small { color: color-mix(in srgb, var(--primary-foreground) 75%, transparent); }
+.recipe-ingredient-tags { display: flex; gap: 5px; margin-top: 12px; overflow: hidden; }
+.recipe-ingredient-tags span { padding: 5px 7px; border-radius: 999px; color: var(--primary); background: var(--secondary); font-size: 7px; font-weight: 700; white-space: nowrap; }
+.account-panel { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 20px; }
+.account-panel .auth-icon { margin: 0; }
+.account-panel > div:nth-child(2) { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 5px 12px; }
+.account-panel small { color: var(--muted-foreground); font-size: 7px; font-weight: 800; letter-spacing: .12em; }
+.account-panel strong, .account-panel p { margin: 0; font-size: 11px; }
+.account-panel span { grid-column: 1 / -1; display: flex; align-items: center; gap: 6px; margin-top: 5px; color: #34725a; font-size: 9px; font-weight: 700; }
+.account-panel > a { display: flex; align-items: center; gap: 7px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 11px; color: var(--destructive); font-size: 9px; font-weight: 750; }
+
 @media (max-width: 1120px) {
   .metric-grid { grid-template-columns: repeat(2, 1fr); }
   .dashboard-grid, .simulator-layout { grid-template-columns: 1fr; }
@@ -323,6 +382,7 @@ tbody tr:hover { background: color-mix(in srgb, var(--muted) 45%, transparent); 
   .quick-panel .panel-header { grid-column: 1 / -1; }
   .quick-link { border-bottom: 0; }
   .module-layout { grid-template-columns: 1fr; }
+  .recipe-layout { grid-template-columns: 1fr; }
   .form-panel { position: static; }
   .report-grid { grid-template-columns: 1fr 1fr; }
 }
@@ -339,7 +399,7 @@ tbody tr:hover { background: color-mix(in srgb, var(--muted) 45%, transparent); 
   .mobile-page-title { display: flex; flex: 1; flex-direction: column; }
   .mobile-page-title span { color: var(--muted-foreground); font-family: var(--font-fraunces); font-size: 10px; }
   .mobile-page-title strong { margin-top: 1px; font-size: 13px; }
-  .search-box { display: none; }
+  .search-shell { display: none; }
   .topbar-actions { margin-left: 8px; }
   .topbar-actions .notification-button, .user-chip > div:nth-child(2), .user-chip > svg { display: none; }
   .user-chip { margin: 0; padding-left: 8px; }
@@ -373,6 +433,13 @@ tbody tr:hover { background: color-mix(in srgb, var(--muted) 45%, transparent); 
   .form-row { grid-template-columns: 1fr; }
   .data-form input, .data-form select, .data-form textarea { min-height: 46px; font-size: 16px; }
   .recipe-list { grid-template-columns: 1fr; }
+  .builder-row { grid-template-columns: 1fr 1fr; }
+  .builder-row > strong { padding: 0 0 9px; text-align: left; }
+  .builder-row > button { justify-self: end; }
+  .auth-card { padding: 32px 22px; border-radius: 22px; }
+  .auth-card h1 { font-size: 31px; }
+  .account-panel { grid-template-columns: auto 1fr; }
+  .account-panel > a { grid-column: 1 / -1; justify-content: center; }
   .simulator-result { min-height: auto; padding: 26px 16px; }
   .price-orbit { width: 205px; height: 205px; }
   .price-orbit strong { font-size: 38px; }
