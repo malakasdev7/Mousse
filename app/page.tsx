@@ -157,6 +157,16 @@ function ModuleView({ view }: { view: string }) {
   const [variableRate, setVariableRate] = useState(5);
   const [discount, setDiscount] = useState(0);
   const [fixedIncluded, setFixedIncluded] = useState(true);
+  useEffect(() => {
+    fetch('/api/records').then((response) => response.ok ? response.json() : []).then((records: Array<{ kind: string; payload: Record<string, unknown> }>) => {
+      const storedIngredients = records.filter((record) => record.kind === 'ingredient').map((record) => record.payload as typeof ingredientSeed[number]);
+      const storedPackages = records.filter((record) => record.kind === 'packaging').map((record) => record.payload as typeof packageSeed[number]);
+      const storedExpenses = records.filter((record) => record.kind === 'expense').map((record) => record.payload as typeof expenseSeed[number]);
+      if (storedIngredients.length) setIngredients([...storedIngredients, ...ingredientSeed]);
+      if (storedPackages.length) setPackages([...storedPackages, ...packageSeed]);
+      if (storedExpenses.length) setExpenses([...storedExpenses, ...expenseSeed]);
+    }).catch(() => undefined);
+  }, []);
   const monthlyUnits = 650;
   const fixedTotal = expenses.reduce((sum, item) => sum + item.value, 0);
   const fixedUnit = fixedIncluded ? fixedTotal / monthlyUnits : 0;
@@ -239,6 +249,7 @@ function ExpenseTable({ items }: { items: typeof expenseSeed }) {
 
 function RecipesView({ persist, saved }: { persist: (kind: string, payload: Record<string, unknown>) => void; saved: boolean }) {
   const [recipes, setRecipes] = useState(recipeSeed);
+  useEffect(() => { fetch('/api/records').then((response) => response.ok ? response.json() : []).then((records: Array<{ kind: string; payload: typeof recipeSeed[number] }>) => { const savedRecipes = records.filter((record) => record.kind === 'recipe').map((record) => record.payload); if (savedRecipes.length) setRecipes([...savedRecipes, ...recipeSeed]); }).catch(() => undefined); }, []);
   function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault(); const form = new FormData(event.currentTarget);
     const cost = Number(form.get('cost')); const yieldQty = Number(form.get('yield')); const waste = Number(form.get('waste'));
@@ -259,6 +270,7 @@ function RecipesView({ persist, saved }: { persist: (kind: string, payload: Reco
 
 function ProductsView({ persist, saved }: { persist: (kind: string, payload: Record<string, unknown>) => void; saved: boolean }) {
   const [items, setItems] = useState(products);
+  useEffect(() => { fetch('/api/records').then((response) => response.ok ? response.json() : []).then((records: Array<{ kind: string; payload: typeof products[number] }>) => { const savedProducts = records.filter((record) => record.kind === 'product').map((record) => record.payload); if (savedProducts.length) setItems([...savedProducts, ...products]); }).catch(() => undefined); }, []);
   function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault(); const form = new FormData(event.currentTarget); const cost = Number(form.get('ingredients')) + Number(form.get('packaging')) + Number(form.get('extras')) + Number(form.get('labor')) + Number(form.get('fees')); const margin = Number(form.get('margin')); const price = cost / (1 - margin / 100); const item = { name: String(form.get('name')), size: String(form.get('size')), cost, price, margin, profit: price - cost, tone: 'berry' }; setItems([item, ...items]); persist('product', item); event.currentTarget.reset();
   }
