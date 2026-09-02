@@ -7,7 +7,7 @@ test('fluxo principal funciona no celular', async ({ page }) => {
   await page.waitForLoadState('networkidle');
   const dock = page.getByRole('navigation', { name: 'Navegação rápida' });
   await expect(dock).toBeVisible();
-  await expect(page.getByRole('heading', { name: 'Sua operação começa aqui.' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Sua operação em números.' })).toBeVisible();
 
   await dock.getByRole('button', { name: 'Insumos', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Ingredientes e compras' })).toBeVisible();
@@ -48,6 +48,40 @@ test('fluxo principal funciona no celular', async ({ page }) => {
   await page.getByRole('button', { name: 'Salvar registro' }).click();
   await expect(page.getByText(recipeName, { exact: true })).toBeVisible();
 
+  await dock.getByRole('button', { name: 'Produtos', exact: true }).click();
+  const productName = `Produto teste ${Date.now()}`;
+  await page.getByLabel('Nome').fill(productName);
+  await page.getByLabel('Tamanho ou apresentação').fill('Pote 120 ml');
+  await page.getByLabel('Receita base').selectOption({ label: `${recipeName} · R$ 2,20 por porção` });
+  await expect(page.getByLabel('Custo da receita')).toHaveValue('2.2');
+  await page.getByRole('button', { name: 'Salvar registro' }).click();
+  await expect(page.getByText(productName, { exact: true })).toBeVisible();
+
+  await dock.getByRole('button', { name: 'Vendas', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Lançar vendas' })).toBeVisible();
+  await page.getByLabel('Produto').selectOption({ label: `${productName} · R$ 4,40` });
+  await page.getByLabel('Quantidade').fill('2');
+  await page.getByLabel('Desconto total').fill('0.8');
+  await page.getByLabel('Taxas da venda').fill('0.5');
+  await page.getByLabel('Custo de entrega').fill('0.7');
+  await expect(page.getByText('R$ 2,40', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Salvar registro' }).click();
+  await expect(page.getByRole('row').filter({ hasText: productName })).toBeVisible();
+
+  const saleRow = page.getByRole('row').filter({ hasText: productName });
+  await saleRow.getByRole('button', { name: 'Editar' }).click();
+  await page.getByLabel('Quantidade').fill('3');
+  await page.getByRole('button', { name: 'Salvar alterações' }).click();
+  await expect(page.getByRole('row').filter({ hasText: productName })).toContainText('3');
+  page.once('dialog', dialog => dialog.accept());
+  await page.getByRole('row').filter({ hasText: productName }).getByRole('button', { name: 'Excluir' }).click();
+
+  await dock.getByRole('button', { name: 'Produtos', exact: true }).click();
+  page.once('dialog', dialog => dialog.accept());
+  await page.getByRole('row').filter({ hasText: productName }).getByRole('button', { name: 'Excluir' }).click();
+
+  await dock.getByRole('button', { name: 'Mais', exact: true }).click();
+  await page.getByRole('button', { name: 'Receitas' }).click();
   page.once('dialog', dialog => dialog.accept());
   await page.getByText(recipeName, { exact: true }).locator('xpath=ancestor::article').getByRole('button', { name: 'Excluir' }).click();
   await expect(page.getByText(recipeName, { exact: true })).toHaveCount(0);
@@ -56,10 +90,6 @@ test('fluxo principal funciona no celular', async ({ page }) => {
   page.once('dialog', dialog => dialog.accept());
   await page.getByRole('row').filter({ hasText: editedName }).getByRole('button', { name: 'Excluir' }).click();
   await expect(page.getByText(editedName, { exact: true })).toHaveCount(0);
-
-  await dock.getByRole('button', { name: 'Simular', exact: true }).click();
-  await expect(page.getByText('PREÇO SUGERIDO')).toBeVisible();
-  await expect(page.getByText('Informe os custos')).toBeVisible();
 
   const hasHorizontalPageOverflow = await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth);
   expect(hasHorizontalPageOverflow).toBe(false);

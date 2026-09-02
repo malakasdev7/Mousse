@@ -251,6 +251,7 @@ tbody tr:hover { background: color-mix(in srgb, var(--muted) 45%, transparent); 
 
 .module-heading { margin-bottom: 24px; }
 .module-layout { display: grid; grid-template-columns: minmax(330px, .75fr) minmax(0, 1.55fr); gap: 16px; align-items: start; }
+.module-layout > *, .data-panel { min-width: 0; }
 .form-panel { position: sticky; top: 96px; }
 .data-form { display: flex; flex-direction: column; gap: 14px; margin-top: 20px; }
 .data-form label { display: flex; flex-direction: column; gap: 7px; color: var(--muted-foreground); font-size: 10px; font-weight: 700; }
@@ -374,6 +375,20 @@ tbody tr:hover { background: color-mix(in srgb, var(--muted) 45%, transparent); 
 .account-panel strong, .account-panel p { margin: 0; font-size: 11px; }
 .account-panel span { grid-column: 1 / -1; display: flex; align-items: center; gap: 6px; margin-top: 5px; color: #34725a; font-size: 9px; font-weight: 700; }
 .account-panel > a { display: flex; align-items: center; gap: 7px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 11px; color: var(--destructive); font-size: 9px; font-weight: 750; }
+.sales-summary-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 16px; }
+.sales-layout { grid-template-columns: minmax(370px, .85fr) minmax(0, 1.55fr); }
+.sale-empty { min-height: auto; justify-content: flex-start; padding: 11px; border-radius: 10px; color: #9b5d24; background: #fff0d8; }
+.sale-calculation { display: grid; grid-template-columns: repeat(4, 1fr); gap: 7px; padding: 10px; border: 1px solid var(--border); border-radius: 13px; background: var(--muted); }
+.sale-calculation span { display: flex; flex-direction: column; padding: 8px; border-radius: 9px; background: var(--card); }
+.sale-calculation small { color: var(--muted-foreground); font-size: 7px; }
+.sale-calculation strong { margin-top: 5px; font-size: 10px; }
+.sale-calculation .positive { color: #34725a; background: #e1efe7; }
+.sale-calculation .negative { color: var(--destructive); background: #fbe5e5; }
+.export-small { display: flex; align-items: center; gap: 6px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 9px; color: var(--primary); background: var(--background); font-size: 8px; font-weight: 750; }
+.negative-value { color: var(--destructive); font-weight: 750; }
+.sale-status { display: inline-flex; padding: 5px 8px; border-radius: 999px; color: #34725a; background: #e1efe7; font-size: 8px; font-weight: 750; }
+.sale-status.pendente { color: #9b5d24; background: #fff0d8; }
+.sale-status.cancelada { color: #9c4848; background: #fbe5e5; }
 
 @media (max-width: 1120px) {
   .metric-grid { grid-template-columns: repeat(2, 1fr); }
@@ -383,6 +398,7 @@ tbody tr:hover { background: color-mix(in srgb, var(--muted) 45%, transparent); 
   .quick-link { border-bottom: 0; }
   .module-layout { grid-template-columns: 1fr; }
   .recipe-layout { grid-template-columns: 1fr; }
+  .sales-layout { grid-template-columns: 1fr; }
   .form-panel { position: static; }
   .report-grid { grid-template-columns: 1fr 1fr; }
 }
@@ -414,6 +430,7 @@ tbody tr:hover { background: color-mix(in srgb, var(--muted) 45%, transparent); 
   .alert-strip p { font-size: 10px; }
   .alert-strip button { width: 38px; height: 38px; display: grid; place-items: center; flex: none; padding: 0; font-size: 0; }
   .metric-grid { grid-template-columns: 1fr 1fr; gap: 10px; }
+  .sales-summary-grid { grid-template-columns: 1fr; }
   .metric-card { min-height: 130px; flex-direction: column; gap: 10px; padding: 15px; }
   .metric-card p { margin-bottom: 5px; }
   .metric-card strong { font-size: 20px; }
@@ -436,6 +453,7 @@ tbody tr:hover { background: color-mix(in srgb, var(--muted) 45%, transparent); 
   .builder-row { grid-template-columns: 1fr 1fr; }
   .builder-row > strong { padding: 0 0 9px; text-align: left; }
   .builder-row > button { justify-self: end; }
+  .sale-calculation { grid-template-columns: 1fr 1fr; }
   .auth-card { padding: 32px 22px; border-radius: 22px; }
   .auth-card h1 { font-size: 31px; }
   .account-panel { grid-template-columns: auto 1fr; }
