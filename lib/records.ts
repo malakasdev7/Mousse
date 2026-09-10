@@ -31,10 +31,10 @@ export function validatePayload(
   if (serialized.length > 50_000)
     return { ok: false, error: 'Registro muito grande.' };
   for (const [key, field] of Object.entries(value)) {
-    if (typeof field === 'number' && (!Number.isFinite(field) || field < 0))
+    if (typeof field === 'number' && !Number.isFinite(field))
       return {
         ok: false,
-        error: `O campo ${key} precisa ser um número positivo.`,
+        error: `O campo ${key} precisa ser um número válido.`,
       };
     if (
       typeof field === 'string' &&
