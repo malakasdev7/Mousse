@@ -39,11 +39,12 @@ export default function RootLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="pt-BR">
-      <body className={`${jakarta.variable} ${fraunces.variable}`}>
+    <html lang="pt-BR" className="dark" style={{ colorScheme: 'dark' }}>
+      <body className={`${jakarta.variable} ${fraunces.variable} bg-background text-foreground antialiased`}>
         <PwaRegister />
         {children}
       </body>
     </html>
   );
 }
+

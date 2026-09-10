@@ -33,6 +33,28 @@ export async function requireUser(request: Request): Promise<CurrentUser | null>
   const token = authorization?.match(/^Bearer\s+(.+)$/i)?.[1];
   if (!token) return null;
 
+  // 1. Direct / Standalone session token
+  if (token.startsWith('dm_')) {
+    try {
+      const payload = JSON.parse(
+        Buffer.from(token.slice(3), 'base64url').toString('utf-8'),
+      );
+      if (payload && payload.username && payload.id) {
+        return {
+          id: String(payload.id),
+          username: String(payload.username),
+          name: String(payload.name || payload.username),
+          role: (payload.role || 'admin') as AppRole,
+          storeId: String(payload.storeId || 'store_main'),
+          dataOwnerId: String(payload.dataOwnerId || payload.id),
+        };
+      }
+    } catch {
+      // fallback
+    }
+  }
+
+  // 2. Supabase token fallback
   const authUser = await supabaseJson<AuthUser>('/auth/v1/user', token);
   if (!authUser?.id) return null;
   const userId = encodeURIComponent(authUser.id);

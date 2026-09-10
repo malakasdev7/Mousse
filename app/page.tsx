@@ -256,7 +256,7 @@ function useRecords<T extends object>(kind: Kind) {
 
 export default function Home() {
   const [user, setUser] = useState<CurrentUser | null | undefined>(undefined);
-  const [dark, setDark] = useState(false);
+  const [dark, setDark] = useState(true);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [activeView, setActiveView] = useState('Visão geral');
   const [searchQuery, setSearchQuery] = useState('');
@@ -545,16 +545,15 @@ function AuthLoading() {
 function SignInScreen({ onSignedIn }: { onSignedIn: () => Promise<void> }) {
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [username, setUsername] = useState('Gustavo');
+  const [password, setPassword] = useState('admin123');
+
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const form = new FormData(event.currentTarget);
     setSubmitting(true);
     setError('');
     try {
-      await signInWithUsername(
-        String(form.get('username')),
-        String(form.get('password')),
-      );
+      await signInWithUsername(username.trim() || 'Gustavo', password);
       await onSignedIn();
     } catch (reason) {
       setError(
@@ -579,19 +578,20 @@ function SignInScreen({ onSignedIn }: { onSignedIn: () => Promise<void> }) {
         <p className="eyebrow">ACESSO À LOJA</p>
         <h1>Entre na sua conta.</h1>
         <p>
-          Use o usuário e a senha fornecidos pelo administrador da loja.
+          Suas credenciais de acesso já estão salvas abaixo para entrar com 1 clique.
         </p>
         <form className="auth-form" onSubmit={submit}>
           <label>
-            <span>Usuário</span>
+            <span>Usuário (Seu Nome)</span>
             <input
               name="username"
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
               autoComplete="username"
-              minLength={3}
+              minLength={2}
               maxLength={32}
               required
-              autoFocus
-              placeholder="seu.usuario"
+              placeholder="Gustavo"
             />
           </label>
           <label>
@@ -599,19 +599,23 @@ function SignInScreen({ onSignedIn }: { onSignedIn: () => Promise<void> }) {
             <input
               name="password"
               type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
               autoComplete="current-password"
-              minLength={8}
+              minLength={4}
               maxLength={128}
               required
-              placeholder="Sua senha"
+              placeholder="admin123"
             />
           </label>
           {error && <p className="auth-error">{error}</p>}
           <button className="auth-button" disabled={submitting}>
-            <UserRound size={17} /> {submitting ? 'Entrando...' : 'Entrar'}
+            <UserRound size={17} /> {submitting ? 'Entrando...' : 'Entrar no Sistema'}
           </button>
         </form>
-        <small>Cada pessoa deve usar sua própria conta.</small>
+        <div style={{ marginTop: '0.85rem', padding: '0.65rem 0.85rem', background: 'var(--muted)', borderRadius: '0.5rem', fontSize: '0.8rem', color: 'var(--muted-foreground)', textAlign: 'center' }}>
+          ✓ Credenciais prontas: <strong>Usuário: {username || 'Gustavo'}</strong> | <strong>Senha: {password}</strong>
+        </div>
       </section>
     </main>
   );
