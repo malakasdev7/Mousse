@@ -41,6 +41,12 @@ import {
   ShieldCheck,
   HardDrive,
   RefreshCw,
+  Trophy,
+  Crown,
+  Medal,
+  Award,
+  Users,
+  Star,
   UserRound,
   UtensilsCrossed,
   WalletCards,
@@ -412,6 +418,119 @@ async function restoreCompleteBackupFromFile(
   } catch (err: any) {
     onError(err.message || 'Erro ao processar o arquivo de backup.');
   }
+}
+
+type CustomerStats = {
+  name: string;
+  totalSpent: number;
+  totalUnits: number;
+  totalOrders: number;
+  totalProfit: number;
+  ticketMedio: number;
+  lastDate: string;
+  favoriteProduct: string;
+};
+
+function computeTopCustomers(sales: Stored<Sale>[]): CustomerStats[] {
+  const map = new Map<
+    string,
+    {
+      name: string;
+      totalSpent: number;
+      totalUnits: number;
+      totalOrders: number;
+      totalProfit: number;
+      lastDate: string;
+      products: Record<string, number>;
+    }
+  >();
+
+  for (const sale of sales) {
+    if (sale.status === 'Cancelada') continue;
+    const raw = (sale.customer || '').trim();
+    const name = raw || 'Cliente Balcão';
+
+    const existing = map.get(name) || {
+      name,
+      totalSpent: 0,
+      totalUnits: 0,
+      totalOrders: 0,
+      totalProfit: 0,
+      lastDate: '',
+      products: {},
+    };
+
+    existing.totalSpent += sale.netRevenue || sale.gross || 0;
+    existing.totalUnits += sale.quantity || 1;
+    existing.totalOrders += 1;
+    existing.totalProfit += sale.profit || 0;
+    if (sale.date && (!existing.lastDate || sale.date > existing.lastDate)) {
+      existing.lastDate = sale.date;
+    }
+    const pName = sale.productName || 'Produto';
+    existing.products[pName] = (existing.products[pName] || 0) + (sale.quantity || 1);
+
+    map.set(name, existing);
+  }
+
+  return Array.from(map.values())
+    .map((item) => {
+      let favoriteProduct = '—';
+      let maxQty = 0;
+      for (const [prod, qty] of Object.entries(item.products)) {
+        if (qty > maxQty) {
+          maxQty = qty;
+          favoriteProduct = prod;
+        }
+      }
+      return {
+        name: item.name,
+        totalSpent: item.totalSpent,
+        totalUnits: item.totalUnits,
+        totalOrders: item.totalOrders,
+        totalProfit: item.totalProfit,
+        ticketMedio: item.totalOrders > 0 ? item.totalSpent / item.totalOrders : 0,
+        lastDate: item.lastDate,
+        favoriteProduct,
+      };
+    })
+    .sort((a, b) => b.totalSpent - a.totalSpent);
+}
+
+function exportCustomersCsv(customers: CustomerStats[]) {
+  const rows = [
+    [
+      'Posição',
+      'Cliente',
+      'Total Comprado (R$)',
+      'Pedidos',
+      'Unidades',
+      'Lucro Gerado (R$)',
+      'Ticket Médio (R$)',
+      'Item Mais Comprado',
+      'Última Compra',
+    ],
+    ...customers.map((c, i) => [
+      `${i + 1}º`,
+      c.name,
+      c.totalSpent.toFixed(2),
+      c.totalOrders,
+      c.totalUnits,
+      c.totalProfit.toFixed(2),
+      c.ticketMedio.toFixed(2),
+      c.favoriteProduct,
+      c.lastDate || '—',
+    ]),
+  ];
+  const blob = new Blob([`\uFEFF${rows.map((r) => r.join(';')).join('\n')}`], {
+    type: 'text/csv;charset=utf-8',
+  });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `ranking-clientes-${new Date().toISOString().slice(0, 10)}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
 }
 
 function useRecords<T extends object>(kind: Kind) {
@@ -916,6 +1035,8 @@ function Dashboard({
   const revenue = sales.reduce((sum, item) => sum + item.netRevenue, 0);
   const salesProfit = sales.reduce((sum, item) => sum + item.profit, 0);
   const units = sales.reduce((sum, item) => sum + item.quantity, 0);
+  const topCustomers = computeTopCustomers(sales);
+  const topCustomer = topCustomers[0];
   return (
     <>
       <div className="page-heading">
@@ -1057,6 +1178,33 @@ function Dashboard({
             title="Simular preço"
             detail="Teste margem e desconto"
           />
+          {topCustomer && (
+            <div
+              onClick={() => onNavigate('Vendas')}
+              style={{
+                marginTop: '0.75rem',
+                padding: '0.85rem 1rem',
+                borderRadius: '0.75rem',
+                background: 'linear-gradient(135deg, rgba(245, 158, 11, 0.12) 0%, rgba(245, 158, 11, 0.04) 100%)',
+                border: '1px solid rgba(245, 158, 11, 0.3)',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+              }}
+            >
+              <div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', color: '#f59e0b', fontSize: '0.75rem', fontWeight: 700 }}>
+                  <Award size={14} /> CLIENTE TOP 1
+                </div>
+                <strong style={{ fontSize: '0.95rem', display: 'block', marginTop: '0.15rem' }}>{topCustomer.name}</strong>
+                <small style={{ color: 'var(--muted-foreground)', fontSize: '0.75rem' }}>
+                  {topCustomer.totalOrders} pedidos · {money.format(topCustomer.totalSpent)}
+                </small>
+              </div>
+              <ArrowUpRight size={16} style={{ color: '#f59e0b' }} />
+            </div>
+          )}
         </article>
       </section>
       <section className="panel products-panel">
@@ -2915,6 +3063,9 @@ function SalesView() {
   const [fee, setFee] = useState(0);
   const [deliveryCost, setDeliveryCost] = useState(0);
   const [statusFilter, setStatusFilter] = useState('Todas');
+  const [dateFilter, setDateFilter] = useState<'all' | 'today' | 'this_week' | 'this_month'>('all');
+  const [salesTab, setSalesTab] = useState<'sales' | 'customers'>('sales');
+
   const product = products.items.find((item) => item.id === productId);
   const gross = quantity * unitPrice;
   const netRevenue = Math.max(0, gross - discount - fee - deliveryCost);
@@ -2923,6 +3074,7 @@ function SalesView() {
     : 0;
   const cost = (product?.cost || fallbackUnitCost) * quantity;
   const profit = netRevenue - cost;
+
   const validSales = records.items.filter(
     (sale) => sale.status !== 'Cancelada',
   );
@@ -2932,10 +3084,50 @@ function SalesView() {
   );
   const totalProfit = validSales.reduce((sum, sale) => sum + sale.profit, 0);
   const totalUnits = validSales.reduce((sum, sale) => sum + sale.quantity, 0);
-  const visibleSales =
-    statusFilter === 'Todas'
-      ? records.items
-      : records.items.filter((sale) => sale.status === statusFilter);
+
+  const topCustomers = computeTopCustomers(records.items);
+  const topCustomer = topCustomers[0];
+
+  const uniqueCustomers = Array.from(
+    new Set(
+      records.items
+        .map((s) => s.customer?.trim())
+        .filter((c): c is string => Boolean(c && c !== 'Cliente Balcão')),
+    ),
+  );
+
+  const filteredSales = records.items.filter((sale) => {
+    if (statusFilter !== 'Todas' && sale.status !== statusFilter) return false;
+    if (dateFilter === 'all') return true;
+    if (!sale.date) return false;
+    const d = new Date(`${sale.date.slice(0, 10)}T12:00:00`);
+    const now = new Date();
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+
+    if (dateFilter === 'today') {
+      const todayEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59);
+      return d >= todayStart && d <= todayEnd;
+    }
+    if (dateFilter === 'this_week') {
+      const day = now.getDay();
+      const diff = now.getDate() - day + (day === 0 ? -6 : 1);
+      const monday = new Date(now.getFullYear(), now.getMonth(), diff, 0, 0, 0);
+      return d >= monday;
+    }
+    if (dateFilter === 'this_month') {
+      const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+      return d >= startOfMonth;
+    }
+    return true;
+  });
+
+  const sortedSales = [...filteredSales].sort((a, b) => {
+    const dateA = a.date || '';
+    const dateB = b.date || '';
+    if (dateA !== dateB) return dateB.localeCompare(dateA);
+    return b.id - a.id;
+  });
+
   function resetSale() {
     setEditing(null);
     setProductId(0);
@@ -2945,6 +3137,7 @@ function SalesView() {
     setFee(0);
     setDeliveryCost(0);
   }
+
   function startEdit(sale: Stored<Sale>) {
     setEditing(sale);
     setProductId(sale.productId);
@@ -2955,6 +3148,7 @@ function SalesView() {
     setDeliveryCost(sale.deliveryCost);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }
+
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const formElement = event.currentTarget;
@@ -2966,6 +3160,9 @@ function SalesView() {
     const status = String(form.get('status'));
     const productName =
       selectedProduct?.name || editing?.productName || 'Produto';
+    const saleDate =
+      String(form.get('date')) || new Date().toLocaleDateString('en-CA');
+
     await records.save(
       {
         productId,
@@ -2980,31 +3177,51 @@ function SalesView() {
         netRevenue,
         cost,
         profit,
-        date: String(form.get('date')),
+        date: saleDate,
         payment: String(form.get('payment')),
         channel: String(form.get('channel')),
-        customer: String(form.get('customer')),
+        customer: String(form.get('customer') || ''),
         status,
-        notes: String(form.get('notes')),
+        notes: String(form.get('notes') || ''),
       },
       editing?.id,
     );
     formElement.reset();
     resetSale();
   }
+
   return (
     <>
       <ModuleHeading
-        eyebrow="CAIXA E RESULTADOS"
-        title="Lançar vendas"
-        subtitle="Registre cada pedido e acompanhe faturamento, custos e lucro real automaticamente."
+        eyebrow="CAIXA & CLIENTES"
+        title="Lançar vendas & Ranking de Clientes"
+        subtitle="Registre vendas organizadas por data e acompanhe quem é seu melhor cliente."
+        action={
+          <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+            <Button
+              onClick={() => exportCustomersCsv(topCustomers)}
+              variant="outline"
+              className="button-secondary"
+            >
+              <Trophy size={15} /> Exportar Clientes (.csv)
+            </Button>
+            <Button
+              onClick={() => exportSalesCsv(records.items)}
+              className="primary-action"
+            >
+              <Download size={15} /> Exportar Vendas (.csv)
+            </Button>
+          </div>
+        }
       />
+
+      {/* Metric Strip including Top Customer */}
       <section className="sales-summary-grid">
         <Metric
           icon={<CircleDollarSign size={20} />}
           label="Faturamento líquido"
           value={money.format(totalRevenue)}
-          detail={`${validSales.length} vendas válidas`}
+          detail={`${validSales.length} vendas registradas`}
           tone="rose"
         />
         <Metric
@@ -3023,7 +3240,31 @@ function SalesView() {
           detail="Por lançamento"
           tone="cream"
         />
+        {topCustomer && topCustomer.totalSpent > 0 && (
+          <div
+            className="panel"
+            style={{
+              padding: '1.15rem',
+              background: 'linear-gradient(135deg, rgba(245, 158, 11, 0.12) 0%, rgba(217, 119, 6, 0.05) 100%)',
+              border: '1px solid rgba(245, 158, 11, 0.35)',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', marginBottom: '0.25rem' }}>
+              <Crown size={16} style={{ color: '#f59e0b' }} />
+              <p className="section-kicker" style={{ color: '#f59e0b', margin: 0, fontSize: '0.72rem' }}>
+                CLIENTE QUE MAIS COMPROU
+              </p>
+            </div>
+            <strong style={{ fontSize: '1.25rem', color: '#fbbf24', display: 'block' }}>
+              {topCustomer.name}
+            </strong>
+            <p style={{ fontSize: '0.8rem', color: 'var(--muted-foreground)', marginTop: '0.2rem' }}>
+              {money.format(topCustomer.totalSpent)} · {topCustomer.totalOrders} pedidos ({topCustomer.totalUnits} un.)
+            </p>
+          </div>
+        )}
       </section>
+
       <div className="module-layout sales-layout">
         <EditorPanel
           title={editing ? 'Editar venda' : 'Nova venda'}
@@ -3180,12 +3421,18 @@ function SalesView() {
                 />
               </label>
               <label>
-                Cliente (opcional)
+                Cliente
                 <input
                   name="customer"
+                  list="customer-suggestions"
                   defaultValue={editing?.customer}
-                  placeholder="Nome do cliente"
+                  placeholder="Nome do cliente (ex.: Maria, João...)"
                 />
+                <datalist id="customer-suggestions">
+                  {uniqueCustomers.map((cust) => (
+                    <option key={cust} value={cust} />
+                  ))}
+                </datalist>
               </label>
             </div>
             <label>
@@ -3217,41 +3464,203 @@ function SalesView() {
             <SaveButton editing={!!editing} />
           </form>
         </EditorPanel>
+
         <section className="panel data-panel">
-          <div className="panel-header responsive-header">
-            <DataHeader title={`${records.items.length} vendas`} />
-            <button
-              className="export-small"
-              onClick={() => exportSalesCsv(records.items)}
-            >
-              <Download size={14} /> Exportar
-            </button>
-          </div>
-          <div className="category-filters">
-            {['Todas', 'Concluída', 'Pendente', 'Cancelada'].map((status) => (
+          <div className="panel-header responsive-header" style={{ flexWrap: 'wrap', gap: '0.75rem' }}>
+            <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center' }}>
               <button
-                key={status}
-                className={statusFilter === status ? 'active' : ''}
-                onClick={() => setStatusFilter(status)}
+                type="button"
+                className={`tag-button ${salesTab === 'sales' ? 'active' : ''}`}
+                onClick={() => setSalesTab('sales')}
+                style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}
               >
-                {status}
+                <Calendar size={14} /> Vendas por Data ({sortedSales.length})
               </button>
-            ))}
+              <button
+                type="button"
+                className={`tag-button ${salesTab === 'customers' ? 'active' : ''}`}
+                onClick={() => setSalesTab('customers')}
+                style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}
+              >
+                <Crown size={14} style={{ color: '#f59e0b' }} /> Quem mais comprou ({topCustomers.length})
+              </button>
+            </div>
+
+            <div style={{ display: 'flex', gap: '0.5rem' }}>
+              <button
+                className="export-small"
+                onClick={() =>
+                  salesTab === 'customers'
+                    ? exportCustomersCsv(topCustomers)
+                    : exportSalesCsv(records.items)
+                }
+              >
+                <Download size={14} /> {salesTab === 'customers' ? 'CSV Clientes' : 'CSV Vendas'}
+              </button>
+            </div>
           </div>
-          {records.loading ? (
-            <Loading />
-          ) : visibleSales.length ? (
-            <SalesTable
-              items={visibleSales}
-              onEdit={startEdit}
-              onDelete={(id) => confirmDelete(() => records.remove(id))}
-            />
+
+          {salesTab === 'sales' ? (
+            <>
+              {/* Date & Status Filters */}
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', marginBottom: '1rem', alignItems: 'center' }}>
+                <span style={{ fontSize: '0.75rem', color: 'var(--muted-foreground)', fontWeight: 600 }}>Data:</span>
+                <button
+                  type="button"
+                  className={`tag-button ${dateFilter === 'all' ? 'active' : ''}`}
+                  onClick={() => setDateFilter('all')}
+                  style={{ fontSize: '0.75rem', padding: '0.25rem 0.5rem' }}
+                >
+                  Todas
+                </button>
+                <button
+                  type="button"
+                  className={`tag-button ${dateFilter === 'today' ? 'active' : ''}`}
+                  onClick={() => setDateFilter('today')}
+                  style={{ fontSize: '0.75rem', padding: '0.25rem 0.5rem' }}
+                >
+                  Hoje
+                </button>
+                <button
+                  type="button"
+                  className={`tag-button ${dateFilter === 'this_week' ? 'active' : ''}`}
+                  onClick={() => setDateFilter('this_week')}
+                  style={{ fontSize: '0.75rem', padding: '0.25rem 0.5rem' }}
+                >
+                  Esta semana
+                </button>
+                <button
+                  type="button"
+                  className={`tag-button ${dateFilter === 'this_month' ? 'active' : ''}`}
+                  onClick={() => setDateFilter('this_month')}
+                  style={{ fontSize: '0.75rem', padding: '0.25rem 0.5rem' }}
+                >
+                  Este mês
+                </button>
+
+                <div style={{ width: '1px', height: '18px', background: 'var(--border)', margin: '0 0.25rem' }} />
+
+                <span style={{ fontSize: '0.75rem', color: 'var(--muted-foreground)', fontWeight: 600 }}>Status:</span>
+                {['Todas', 'Concluída', 'Pendente', 'Cancelada'].map((status) => (
+                  <button
+                    key={status}
+                    type="button"
+                    className={`tag-button ${statusFilter === status ? 'active' : ''}`}
+                    onClick={() => setStatusFilter(status)}
+                    style={{ fontSize: '0.75rem', padding: '0.25rem 0.5rem' }}
+                  >
+                    {status}
+                  </button>
+                ))}
+              </div>
+
+              {records.loading ? (
+                <Loading />
+              ) : sortedSales.length ? (
+                <SalesTable
+                  items={sortedSales}
+                  onEdit={startEdit}
+                  onDelete={(id) => confirmDelete(() => records.remove(id))}
+                />
+              ) : (
+                <EmptyState
+                  icon={<ShoppingCart />}
+                  title="Nenhuma venda encontrada"
+                  text="Lance a primeira venda ou ajuste os filtros de data para acompanhar o resultado."
+                />
+              )}
+            </>
           ) : (
-            <EmptyState
-              icon={<ShoppingCart />}
-              title="Nenhuma venda encontrada"
-              text="Lance a primeira venda para começar a medir seu resultado."
-            />
+            /* CUSTOMER RANKING TABLE */
+            <div className="product-table-wrap">
+              {topCustomers.length ? (
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Posição</th>
+                      <th>Cliente</th>
+                      <th>Total Comprado</th>
+                      <th>Pedidos / Qtd.</th>
+                      <th>Lucro Gerado</th>
+                      <th>Ticket Médio</th>
+                      <th>Item Favorito</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {topCustomers.map((customer, index) => {
+                      const isFirst = index === 0 && customer.totalSpent > 0;
+                      const isSecond = index === 1 && customer.totalSpent > 0;
+                      const isThird = index === 2 && customer.totalSpent > 0;
+                      return (
+                        <tr key={customer.name} style={isFirst ? { background: 'rgba(245, 158, 11, 0.08)' } : undefined}>
+                          <td>
+                            <span
+                              style={{
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '0.25rem',
+                                fontWeight: 700,
+                                fontSize: '0.85rem',
+                                color: isFirst ? '#f59e0b' : isSecond ? '#94a3b8' : isThird ? '#d97706' : 'var(--muted-foreground)',
+                              }}
+                            >
+                              {isFirst ? '🥇 1º' : isSecond ? '🥈 2º' : isThird ? '🥉 3º' : `${index + 1}º`}
+                            </span>
+                          </td>
+                          <td>
+                            <strong>{customer.name}</strong>
+                            {isFirst && (
+                              <span
+                                style={{
+                                  marginLeft: '0.4rem',
+                                  fontSize: '0.7rem',
+                                  padding: '0.15rem 0.45rem',
+                                  borderRadius: '9999px',
+                                  background: '#f59e0b',
+                                  color: '#000',
+                                  fontWeight: 800,
+                                }}
+                              >
+                                TOP 1
+                              </span>
+                            )}
+                            {customer.lastDate && (
+                              <small className="table-subtitle">
+                                Última: {new Date(`${customer.lastDate}T12:00:00`).toLocaleDateString('pt-BR')}
+                              </small>
+                            )}
+                          </td>
+                          <td>
+                            <strong style={{ color: '#10b981', fontSize: '0.95rem' }}>
+                              {money.format(customer.totalSpent)}
+                            </strong>
+                          </td>
+                          <td>
+                            <span>{customer.totalOrders} pedidos</span>
+                            <small className="table-subtitle">{customer.totalUnits} un. total</small>
+                          </td>
+                          <td className="profit-value">
+                            {money.format(customer.totalProfit)}
+                          </td>
+                          <td>
+                            {money.format(customer.ticketMedio)}
+                          </td>
+                          <td>
+                            <span>{customer.favoriteProduct}</span>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              ) : (
+                <EmptyState
+                  icon={<Users />}
+                  title="Nenhum cliente cadastrado ainda"
+                  text="Ao lançar vendas informando o nome do cliente, o ranking será montado automaticamente."
+                />
+              )}
+            </div>
           )}
         </section>
       </div>
@@ -3646,41 +4055,67 @@ function SalesTable({
   onDelete?: (id: number) => void;
   readOnly?: boolean;
 }) {
+  const sorted = [...items].sort((a, b) => {
+    const dateA = a.date || '';
+    const dateB = b.date || '';
+    if (dateA !== dateB) return dateB.localeCompare(dateA);
+    return b.id - a.id;
+  });
+
   return (
     <div className="product-table-wrap">
       <table>
         <thead>
           <tr>
-            <th>Venda</th>
+            <th>Data</th>
+            <th>Produto / Cliente</th>
             <th>Qtd.</th>
-            <th>Receita líquida</th>
+            <th>Receita Líquida</th>
             <th>Lucro</th>
-            <th>Pagamento</th>
+            <th>Pagamento / Canal</th>
             <th>Status</th>
             {!readOnly && <th />}
           </tr>
         </thead>
         <tbody>
-          {items.map((item) => (
+          {sorted.map((item) => (
             <tr key={item.id}>
               <td>
-                <strong>{item.productName}</strong>
-                <small className="table-subtitle">
+                <span
+                  style={{
+                    display: 'inline-block',
+                    padding: '0.2rem 0.5rem',
+                    borderRadius: '0.35rem',
+                    background: 'var(--muted)',
+                    fontSize: '0.78rem',
+                    fontWeight: 600,
+                  }}
+                >
                   {item.date
-                    ? new Date(`${item.date}T12:00:00`).toLocaleDateString(
-                        'pt-BR',
-                      )
+                    ? new Date(`${item.date}T12:00:00`).toLocaleDateString('pt-BR')
                     : '—'}
-                  {item.customer ? ` · ${item.customer}` : ''}
-                </small>
+                </span>
               </td>
-              <td>{item.quantity}</td>
+              <td>
+                <strong>{item.productName}</strong>
+                {item.customer ? (
+                  <small className="table-subtitle" style={{ color: '#60a5fa', fontWeight: 500 }}>
+                    👤 {item.customer}
+                  </small>
+                ) : (
+                  <small className="table-subtitle" style={{ color: 'var(--muted-foreground)' }}>
+                    Balcão
+                  </small>
+                )}
+              </td>
+              <td>
+                <strong>{item.quantity} un.</strong>
+                <small className="table-subtitle">{money.format(item.unitPrice)}/un.</small>
+              </td>
               <td>
                 <strong>{money.format(item.netRevenue)}</strong>
               </td>
-              <td
-                className={item.profit >= 0 ? 'profit-value' : 'negative-value'}
-              >
+              <td className={item.profit >= 0 ? 'profit-value' : 'negative-value'}>
                 {money.format(item.profit)}
               </td>
               <td>
@@ -4057,6 +4492,9 @@ function ReportsView() {
   const netResult = grossProfit - totalOperatingExpenses;
   const isProfit = netResult >= 0;
   const netMarginPercent = netRevenue > 0 ? (netResult / netRevenue) * 100 : (isProfit ? 0 : -100);
+
+  // Top Customers in Period
+  const periodTopCustomers = computeTopCustomers(periodSales);
 
   // Consolidated Ledger (Everything that was launched)
   type LedgerEntry = {
@@ -4724,6 +5162,125 @@ function ReportsView() {
             icon={<ReceiptText />}
             title="Nenhum lançamento encontrado"
             text="Não há registros correspondentes aos filtros selecionados."
+          />
+        )}
+      </section>
+
+      {/* Top Customers Ranking (Quem comprou mais) */}
+      <section className="panel" style={{ padding: '1.5rem', marginBottom: '1.75rem' }}>
+        <div className="panel-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem', marginBottom: '1.25rem' }}>
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <Award size={20} style={{ color: '#f59e0b' }} />
+              <DataHeader title="Ranking de Melhores Clientes (Quem Comprou Mais)" />
+            </div>
+            <p style={{ fontSize: '0.85rem', color: 'var(--muted-foreground)', marginTop: '0.2rem' }}>
+              Descubra seus clientes mais fiéis, ticket médio, produto favorito e lucro gerado por cada um no período selecionado.
+            </p>
+          </div>
+          <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+            <span className="rate-badge">
+              {periodTopCustomers.length} clientes
+            </span>
+            <Button
+              onClick={() => exportCustomersCsv(periodTopCustomers)}
+              variant="outline"
+              className="button-secondary"
+            >
+              <Download size={14} /> Exportar Clientes (.csv)
+            </Button>
+          </div>
+        </div>
+
+        {periodTopCustomers.length ? (
+          <div className="product-table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th style={{ width: '70px' }}>Posição</th>
+                  <th>Cliente</th>
+                  <th style={{ textAlign: 'center' }}>Pedidos</th>
+                  <th style={{ textAlign: 'center' }}>Unidades</th>
+                  <th>Item Favorito</th>
+                  <th style={{ textAlign: 'right' }}>Ticket Médio</th>
+                  <th style={{ textAlign: 'right' }}>Lucro Gerado</th>
+                  <th style={{ textAlign: 'right' }}>Total Comprado</th>
+                </tr>
+              </thead>
+              <tbody>
+                {periodTopCustomers.map((cust, idx) => {
+                  const medal =
+                    idx === 0
+                      ? '🥇 1º'
+                      : idx === 1
+                        ? '🥈 2º'
+                        : idx === 2
+                          ? '🥉 3º'
+                          : `${idx + 1}º`;
+                  return (
+                    <tr
+                      key={cust.name}
+                      style={{
+                        background:
+                          idx === 0
+                            ? 'rgba(245, 158, 11, 0.08)'
+                            : idx === 1
+                              ? 'rgba(148, 163, 184, 0.05)'
+                              : idx === 2
+                                ? 'rgba(217, 119, 6, 0.05)'
+                                : undefined,
+                      }}
+                    >
+                      <td>
+                        <span
+                          style={{
+                            fontWeight: 700,
+                            fontSize: idx < 3 ? '1rem' : '0.85rem',
+                            color: idx === 0 ? '#f59e0b' : 'inherit',
+                          }}
+                        >
+                          {medal}
+                        </span>
+                      </td>
+                      <td>
+                        <strong>{cust.name}</strong>
+                        {cust.lastDate && (
+                          <small className="table-subtitle">
+                            Última compra: {new Date(`${cust.lastDate}T12:00:00`).toLocaleDateString('pt-BR')}
+                          </small>
+                        )}
+                      </td>
+                      <td style={{ textAlign: 'center' }}>
+                        <span className="rate-badge">{cust.totalOrders}</span>
+                      </td>
+                      <td style={{ textAlign: 'center' }}>{cust.totalUnits} un.</td>
+                      <td>
+                        <span style={{ fontSize: '0.85rem' }}>{cust.favoriteProduct}</span>
+                      </td>
+                      <td style={{ textAlign: 'right' }}>
+                        <span style={{ fontSize: '0.85rem' }}>{money.format(cust.ticketMedio)}</span>
+                      </td>
+                      <td style={{ textAlign: 'right' }}>
+                        <strong style={{ color: '#10b981', fontSize: '0.9rem' }}>
+                          {money.format(cust.totalProfit)}
+                        </strong>
+                      </td>
+                      <td style={{ textAlign: 'right' }}>
+                        <strong style={{ fontSize: '1rem', color: idx === 0 ? '#f59e0b' : 'var(--foreground)' }}>
+                          {money.format(cust.totalSpent)}
+                        </strong>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <EmptyState
+            icon={<Award />}
+            title="Nenhum cliente no período"
+            text="Lance vendas com o nome do cliente para visualizar o ranking dos que mais compraram."
           />
         )}
       </section>
