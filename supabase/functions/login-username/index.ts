@@ -1,7 +1,7 @@
 import 'jsr:@supabase/functions-js/edge-runtime.d.ts';
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 
-const cors = { 'access-control-allow-origin': Deno.env.get('ALLOWED_ORIGIN') ?? '', 'access-control-allow-headers': 'apikey, content-type', 'access-control-allow-methods': 'POST, OPTIONS', 'content-type': 'application/json' };
+const cors = { 'access-control-allow-origin': Deno.env.get('ALLOWED_ORIGIN') ?? 'https://doce-margem.mjmconstrutoras.chatgpt.site', 'access-control-allow-headers': 'apikey, content-type', 'access-control-allow-methods': 'POST, OPTIONS', 'content-type': 'application/json' };
 const fail = (status = 401) => new Response(JSON.stringify({ error: status === 429 ? 'Muitas tentativas. Aguarde e tente novamente.' : 'Usuário ou senha inválidos.' }), { status, headers: cors });
 
 Deno.serve(async (request) => {

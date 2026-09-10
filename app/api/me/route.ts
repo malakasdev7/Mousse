@@ -8,5 +8,6 @@ export async function GET(request: Request) {
       { error: 'Não autenticado.' },
       { status: 401, headers },
     );
-  return Response.json(user, { headers });
+  const { dataOwnerId: _dataOwnerId, ...safeUser } = user;
+  return Response.json(safeUser, { headers });
 }

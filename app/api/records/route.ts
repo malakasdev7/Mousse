@@ -49,7 +49,7 @@ export async function GET(request: Request) {
   const records = await getDb()
     .select()
     .from(auditRecords)
-    .where(eq(auditRecords.ownerId, user.id))
+    .where(eq(auditRecords.ownerId, user.dataOwnerId))
     .orderBy(desc(auditRecords.id))
     .limit(500);
   return json(
@@ -67,6 +67,8 @@ export async function POST(request: Request) {
       { error: 'Sessão expirada. Entre novamente.' },
       { status: 401 },
     );
+  if (user.role === 'viewer')
+    return json({ error: 'Seu acesso é somente para consulta.' }, { status: 403 });
   try {
     const body = (await parseBody(request)) as {
       kind?: unknown;
@@ -79,10 +81,10 @@ export async function POST(request: Request) {
     const payloadJson = JSON.stringify(validated.value);
     const result = await getDb()
       .insert(auditRecords)
-      .values({ ownerId: user.id, kind: body.kind, payloadJson })
+      .values({ ownerId: user.dataOwnerId, kind: body.kind, payloadJson })
       .returning();
     await writeAudit({
-      ownerId: user.id,
+      ownerId: user.dataOwnerId,
       recordId: result[0].id,
       kind: body.kind,
       action: 'create',
@@ -101,6 +103,8 @@ export async function PUT(request: Request) {
       { error: 'Sessão expirada. Entre novamente.' },
       { status: 401 },
     );
+  if (user.role === 'viewer')
+    return json({ error: 'Seu acesso é somente para consulta.' }, { status: 403 });
   try {
     const body = (await parseBody(request)) as {
       id?: number;
@@ -112,7 +116,10 @@ export async function PUT(request: Request) {
       .select()
       .from(auditRecords)
       .where(
-        and(eq(auditRecords.id, body.id!), eq(auditRecords.ownerId, user.id)),
+        and(
+          eq(auditRecords.id, body.id!),
+          eq(auditRecords.ownerId, user.dataOwnerId),
+        ),
       )
       .limit(1);
     if (!current[0] || !isRecordKind(current[0].kind))
@@ -124,11 +131,14 @@ export async function PUT(request: Request) {
       .update(auditRecords)
       .set({ payloadJson, updatedAt: new Date().toISOString() })
       .where(
-        and(eq(auditRecords.id, body.id!), eq(auditRecords.ownerId, user.id)),
+        and(
+          eq(auditRecords.id, body.id!),
+          eq(auditRecords.ownerId, user.dataOwnerId),
+        ),
       )
       .returning();
     await writeAudit({
-      ownerId: user.id,
+      ownerId: user.dataOwnerId,
       recordId: body.id!,
       kind: current[0].kind,
       action: 'update',
@@ -148,6 +158,11 @@ export async function DELETE(request: Request) {
       { error: 'Sessão expirada. Entre novamente.' },
       { status: 401 },
     );
+  if (user.role !== 'admin')
+    return json(
+      { error: 'Somente administradores podem excluir.' },
+      { status: 403 },
+    );
   try {
     const body = (await parseBody(request)) as { id?: number };
     if (!Number.isInteger(body.id) || Number(body.id) <= 0)
@@ -156,13 +171,16 @@ export async function DELETE(request: Request) {
       .select()
       .from(auditRecords)
       .where(
-        and(eq(auditRecords.id, body.id!), eq(auditRecords.ownerId, user.id)),
+        and(
+          eq(auditRecords.id, body.id!),
+          eq(auditRecords.ownerId, user.dataOwnerId),
+        ),
       )
       .limit(1);
     if (!current[0])
       return json({ error: 'Registro não encontrado.' }, { status: 404 });
     await writeAudit({
-      ownerId: user.id,
+      ownerId: user.dataOwnerId,
       recordId: body.id!,
       kind: current[0].kind,
       action: 'delete',
@@ -171,7 +189,10 @@ export async function DELETE(request: Request) {
     await getDb()
       .delete(auditRecords)
       .where(
-        and(eq(auditRecords.id, body.id!), eq(auditRecords.ownerId, user.id)),
+        and(
+          eq(auditRecords.id, body.id!),
+          eq(auditRecords.ownerId, user.dataOwnerId),
+        ),
       );
     return json({ ok: true });
   } catch (error) {

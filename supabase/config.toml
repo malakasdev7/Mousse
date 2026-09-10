@@ -1,2 +1,5 @@
 [functions.login-username]
 verify_jwt = false
+
+[functions.account-admin]
+verify_jwt = false

@@ -43,6 +43,12 @@ import {
   calculatePromotion,
   ingredientUnitCost,
 } from '@/lib/pricing';
+import {
+  authenticatedFetch,
+  getAuthConfig,
+  getSupabaseBrowserClient,
+  signInWithUsername,
+} from '@/lib/supabase-browser';
 
 const money = new Intl.NumberFormat('pt-BR', {
   style: 'currency',
@@ -61,7 +67,14 @@ type ApiRecord<T = Record<string, unknown>> = {
   kind: Kind;
   payload: T;
 };
-type CurrentUser = { id: string; email: string; name: string };
+type AppRole = 'admin' | 'employee' | 'viewer';
+type CurrentUser = {
+  id: string;
+  username: string;
+  name: string;
+  role: AppRole;
+  storeId: string;
+};
 type Ingredient = {
   name: string;
   category: string;
@@ -179,7 +192,7 @@ const nav = [
 ];
 
 async function requestRecords<T = Record<string, unknown>>() {
-  const response = await fetch('/api/records');
+  const response = await authenticatedFetch('/api/records');
   if (response.status === 401)
     throw new Error(
       'Sua sessão expirou. Atualize a página para entrar novamente.',
@@ -209,7 +222,7 @@ function useRecords<T extends object>(kind: Kind) {
   }, [load]);
 
   async function save(payload: T, id?: number) {
-    const response = await fetch('/api/records', {
+    const response = await authenticatedFetch('/api/records', {
       method: id ? 'PUT' : 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(id ? { id, payload } : { kind, payload }),
@@ -230,7 +243,7 @@ function useRecords<T extends object>(kind: Kind) {
     return saved;
   }
   async function remove(id: number) {
-    const response = await fetch('/api/records', {
+    const response = await authenticatedFetch('/api/records', {
       method: 'DELETE',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ id }),
@@ -249,11 +262,25 @@ export default function Home() {
   const [searchQuery, setSearchQuery] = useState('');
   const [allRecords, setAllRecords] = useState<ApiRecord[]>([]);
   useEffect(() => {
-    fetch('/api/me')
-      .then(async (response) =>
-        response.ok ? setUser(await response.json()) : setUser(null),
-      )
-      .catch(() => setUser(null));
+    let active = true;
+    getSupabaseBrowserClient()
+      .then((client) => client.auth.getSession())
+      .then(async ({ data }) => {
+        if (!active) return;
+        if (!data.session) return setUser(null);
+        const response = await authenticatedFetch('/api/me');
+        if (!active) return;
+        if (!response.ok) {
+          await (await getSupabaseBrowserClient()).auth.signOut();
+          setUser(null);
+          return;
+        }
+        setUser(await response.json());
+      })
+      .catch(() => active && setUser(null));
+    return () => {
+      active = false;
+    };
   }, []);
   useEffect(() => {
     document.documentElement.classList.toggle('dark', dark);
@@ -266,7 +293,22 @@ export default function Home() {
   }, [activeView, user]);
 
   if (user === undefined) return <AuthLoading />;
-  if (!user) return <SignInScreen />;
+  if (!user)
+    return (
+      <SignInScreen
+        onSignedIn={async () => {
+          const response = await authenticatedFetch('/api/me');
+          if (!response.ok) throw new Error('Conta sem acesso a esta loja.');
+          setUser(await response.json());
+        }}
+      />
+    );
+
+  const logout = async () => {
+    await (await getSupabaseBrowserClient()).auth.signOut();
+    setAllRecords([]);
+    setUser(null);
+  };
 
   const dashboardProducts = allRecords
     .filter((record) => record.kind === 'product')
@@ -461,14 +503,13 @@ export default function Home() {
               </div>
               <ChevronDown size={15} />
             </div>
-            <a
+            <button
               className="icon-button"
-              href="/signout-with-chatgpt?return_to=/"
-              target="_top"
+              onClick={logout}
               aria-label="Sair da conta"
             >
               <LogOut size={17} />
-            </a>
+            </button>
           </div>
         </header>
         <div className="page-wrap">
@@ -481,7 +522,7 @@ export default function Home() {
               onNavigate={switchView}
             />
           ) : (
-            <ModuleRouter view={activeView} user={user} />
+            <ModuleRouter view={activeView} user={user} onLogout={logout} />
           )}
         </div>
       </section>
@@ -501,7 +542,28 @@ function AuthLoading() {
     </main>
   );
 }
-function SignInScreen() {
+function SignInScreen({ onSignedIn }: { onSignedIn: () => Promise<void> }) {
+  const [error, setError] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  async function submit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    setSubmitting(true);
+    setError('');
+    try {
+      await signInWithUsername(
+        String(form.get('username')),
+        String(form.get('password')),
+      );
+      await onSignedIn();
+    } catch (reason) {
+      setError(
+        reason instanceof Error ? reason.message : 'Não foi possível entrar.',
+      );
+    } finally {
+      setSubmitting(false);
+    }
+  }
   return (
     <main className="auth-screen">
       <section className="auth-card">
@@ -514,20 +576,42 @@ function SignInScreen() {
         <div className="auth-icon">
           <UserRound size={30} />
         </div>
-        <p className="eyebrow">SUA CONTA, SEUS DADOS</p>
-        <h1>Entre para cuidar da sua operação.</h1>
+        <p className="eyebrow">ACESSO À LOJA</p>
+        <h1>Entre na sua conta.</h1>
         <p>
-          Cada usuário tem uma área separada e protegida para ingredientes,
-          receitas, custos e produtos.
+          Use o usuário e a senha fornecidos pelo administrador da loja.
         </p>
-        <a
-          className="auth-button"
-          href="/signin-with-chatgpt?return_to=/"
-          target="_top"
-        >
-          <Sparkles size={17} /> Entrar com ChatGPT
-        </a>
-        <small>Seus dados nunca são compartilhados com outros usuários.</small>
+        <form className="auth-form" onSubmit={submit}>
+          <label>
+            <span>Usuário</span>
+            <input
+              name="username"
+              autoComplete="username"
+              minLength={3}
+              maxLength={32}
+              required
+              autoFocus
+              placeholder="seu.usuario"
+            />
+          </label>
+          <label>
+            <span>Senha</span>
+            <input
+              name="password"
+              type="password"
+              autoComplete="current-password"
+              minLength={8}
+              maxLength={128}
+              required
+              placeholder="Sua senha"
+            />
+          </label>
+          {error && <p className="auth-error">{error}</p>}
+          <button className="auth-button" disabled={submitting}>
+            <UserRound size={17} /> {submitting ? 'Entrando...' : 'Entrar'}
+          </button>
+        </form>
+        <small>Cada pessoa deve usar sua própria conta.</small>
       </section>
     </main>
   );
@@ -848,7 +932,15 @@ function confirmDelete(callback: () => void) {
   if (window.confirm('Excluir este registro permanentemente?')) callback();
 }
 
-function ModuleRouter({ view, user }: { view: string; user: CurrentUser }) {
+function ModuleRouter({
+  view,
+  user,
+  onLogout,
+}: {
+  view: string;
+  user: CurrentUser;
+  onLogout: () => Promise<void>;
+}) {
   if (view === 'Ingredientes') return <IngredientsView />;
   if (view === 'Embalagens') return <PackagingView />;
   if (view === 'Despesas') return <ExpensesView />;
@@ -856,11 +948,87 @@ function ModuleRouter({ view, user }: { view: string; user: CurrentUser }) {
   if (view === 'Produtos') return <ProductsView />;
   if (view === 'Vendas') return <SalesView />;
   if (view === 'Simulador') return <SimulatorView />;
-  if (view === 'Minha conta') return <AccountView user={user} />;
+  if (view === 'Minha conta')
+    return <AccountView user={user} onLogout={onLogout} />;
   return <ReportsView />;
 }
 
-function AccountView({ user }: { user: CurrentUser }) {
+const roleLabels: Record<AppRole, string> = {
+  admin: 'Administrador',
+  employee: 'Colaborador',
+  viewer: 'Somente leitura',
+};
+
+function AccountView({
+  user,
+  onLogout,
+}: {
+  user: CurrentUser;
+  onLogout: () => Promise<void>;
+}) {
+  const [notice, setNotice] = useState('');
+  const [error, setError] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  async function changePassword(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const formElement = event.currentTarget;
+    const form = new FormData(formElement);
+    const password = String(form.get('password'));
+    const confirmation = String(form.get('confirmation'));
+    if (password !== confirmation) return setError('As senhas não são iguais.');
+    setSaving(true);
+    setError('');
+    const { error: updateError } = await (
+      await getSupabaseBrowserClient()
+    ).auth.updateUser({ password });
+    setSaving(false);
+    if (updateError) return setError('Não foi possível alterar a senha.');
+    formElement.reset();
+    setNotice('Senha alterada com sucesso.');
+  }
+
+  async function createAccount(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const formElement = event.currentTarget;
+    const form = new FormData(formElement);
+    setSaving(true);
+    setError('');
+    setNotice('');
+    try {
+      const [client, config] = await Promise.all([
+        getSupabaseBrowserClient(),
+        getAuthConfig(),
+      ]);
+      const { data } = await client.auth.getSession();
+      const response = await fetch(`${config.url}/functions/v1/account-admin`, {
+        method: 'POST',
+        headers: {
+          apikey: config.publishableKey,
+          authorization: `Bearer ${data.session?.access_token || ''}`,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          action: 'create',
+          username: String(form.get('username')),
+          displayName: String(form.get('displayName')),
+          password: String(form.get('newUserPassword')),
+          role: String(form.get('role')),
+        }),
+      });
+      const body = (await response.json().catch(() => null)) as {
+        error?: string;
+      } | null;
+      if (!response.ok) throw new Error(body?.error || 'Não foi possível criar.');
+      formElement.reset();
+      setNotice('Conta criada. A pessoa já pode entrar com esse usuário.');
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Não foi possível criar.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
   return (
     <>
       <ModuleHeading
@@ -875,16 +1043,74 @@ function AccountView({ user }: { user: CurrentUser }) {
         <div>
           <small>NOME</small>
           <strong>{user.name}</strong>
-          <small>E-MAIL</small>
-          <p>{user.email}</p>
+          <small>USUÁRIO</small>
+          <p>{user.username}</p>
+          <small>ACESSO</small>
+          <p>{roleLabels[user.role]}</p>
           <span>
             <CheckCircle2 size={15} /> Dados protegidos e isolados por usuário
           </span>
         </div>
-        <a href="/signout-with-chatgpt?return_to=/" target="_top">
+        <button className="account-logout" onClick={onLogout}>
           <LogOut size={16} /> Sair da conta
-        </a>
+        </button>
       </section>
+      <section className="account-grid">
+        <form className="panel data-form account-form" onSubmit={changePassword}>
+          <div className="panel-header">
+            <div>
+              <p className="section-kicker">MINHA SEGURANÇA</p>
+              <h2>Alterar senha</h2>
+            </div>
+          </div>
+          <label>
+            <span>Nova senha</span>
+            <input name="password" type="password" minLength={10} maxLength={128} required />
+          </label>
+          <label>
+            <span>Confirmar nova senha</span>
+            <input name="confirmation" type="password" minLength={10} maxLength={128} required />
+          </label>
+          <Button disabled={saving}>Salvar nova senha</Button>
+        </form>
+        {user.role === 'admin' && (
+          <form className="panel data-form account-form" onSubmit={createAccount}>
+            <div className="panel-header">
+              <div>
+                <p className="section-kicker">EQUIPE</p>
+                <h2>Criar conta de usuário</h2>
+              </div>
+            </div>
+            <div className="form-row">
+              <label>
+                <span>Nome da pessoa</span>
+                <input name="displayName" required maxLength={100} />
+              </label>
+              <label>
+                <span>Usuário</span>
+                <input name="username" required minLength={3} maxLength={32} pattern="[a-z0-9._-]+" />
+              </label>
+            </div>
+            <div className="form-row">
+              <label>
+                <span>Senha inicial</span>
+                <input name="newUserPassword" type="password" required minLength={10} maxLength={128} />
+              </label>
+              <label>
+                <span>Nível de acesso</span>
+                <select name="role" defaultValue="employee">
+                  <option value="admin">Administrador</option>
+                  <option value="employee">Colaborador</option>
+                  <option value="viewer">Somente leitura</option>
+                </select>
+              </label>
+            </div>
+            <Button disabled={saving}>Criar conta</Button>
+          </form>
+        )}
+      </section>
+      {notice && <div className="save-toast"><CheckCircle2 size={16} /> {notice}</div>}
+      {error && <div className="form-error">{error}</div>}
     </>
   );
 }
