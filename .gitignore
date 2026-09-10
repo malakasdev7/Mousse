@@ -46,3 +46,4 @@ node_modules/
 /playwright/.auth/
 
 /.sites-runtime/
+/.playwright-mcp/
