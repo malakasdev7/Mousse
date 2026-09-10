@@ -17,7 +17,7 @@ test('fluxo principal funciona no celular', async ({ page }) => {
   await page.getByLabel('Nome').fill(testName);
   await page.getByLabel('Categoria').selectOption('Chocolates e cacau');
   await page.getByLabel('Embalagem de compra').fill('pacote 100 g');
-  await page.getByLabel('Quantidade na embalagem').fill('100');
+  await page.getByLabel('Quantidade útil na embalagem').fill('100');
   await page.getByLabel('Unidade usada na receita').selectOption('g');
   await page.getByLabel('Preço pago').fill('20');
   await page.getByLabel('Estoque atual').fill('100');

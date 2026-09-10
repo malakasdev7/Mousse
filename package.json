@@ -10,6 +10,8 @@
     "build": "vinext build",
     "start": "wrangler dev --config dist/server/wrangler.json",
     "lint": "oxlint",
+    "test": "playwright test tests/pricing.spec.ts",
+    "test:mobile": "playwright test tests/mobile.spec.ts --project=chromium",
     "format": "oxfmt",
     "db:generate": "drizzle-kit generate"
   },

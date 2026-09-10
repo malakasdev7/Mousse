@@ -1,16 +1,147 @@
 import { sql } from 'drizzle-orm';
 import { integer, real, sqliteTable, text } from 'drizzle-orm/sqlite-core';
 
-const timestamps = { createdAt: text('created_at').notNull().default(sql`CURRENT_TIMESTAMP`), updatedAt: text('updated_at').notNull().default(sql`CURRENT_TIMESTAMP`) };
-export const users = sqliteTable('users', { id: text('id').primaryKey(), email: text('email').notNull().unique(), name: text('name'), role: text('role').notNull().default('admin'), ...timestamps });
-export const suppliers = sqliteTable('suppliers', { id: integer('id').primaryKey({ autoIncrement: true }), ownerId: text('owner_id').references(() => users.id), name: text('name').notNull(), contact: text('contact'), notes: text('notes'), ...timestamps });
-export const ingredients = sqliteTable('ingredients', { id: integer('id').primaryKey({ autoIncrement: true }), ownerId: text('owner_id').references(() => users.id), supplierId: integer('supplier_id').references(() => suppliers.id), name: text('name').notNull(), purchaseUnit: text('purchase_unit').notNull(), purchasedQuantity: real('purchased_quantity').notNull(), priceCents: integer('price_cents').notNull(), fractionUnit: text('fraction_unit').notNull().default('g'), expiresAt: text('expires_at'), lastPurchaseAt: text('last_purchase_at'), active: integer('active', { mode: 'boolean' }).notNull().default(true), ...timestamps });
-export const purchaseHistory = sqliteTable('purchase_history', { id: integer('id').primaryKey({ autoIncrement: true }), ingredientId: integer('ingredient_id').notNull().references(() => ingredients.id), supplierId: integer('supplier_id').references(() => suppliers.id), quantity: real('quantity').notNull(), priceCents: integer('price_cents').notNull(), purchasedAt: text('purchased_at').notNull(), ...timestamps });
-export const packagingItems = sqliteTable('packaging_items', { id: integer('id').primaryKey({ autoIncrement: true }), ownerId: text('owner_id').references(() => users.id), name: text('name').notNull(), category: text('category').notNull(), packQuantity: real('pack_quantity').notNull(), priceCents: integer('price_cents').notNull(), supplierId: integer('supplier_id').references(() => suppliers.id), ...timestamps });
-export const recipes = sqliteTable('recipes', { id: integer('id').primaryKey({ autoIncrement: true }), ownerId: text('owner_id').references(() => users.id), name: text('name').notNull(), yieldQuantity: real('yield_quantity').notNull(), yieldUnit: text('yield_unit').notNull(), wastePercent: real('waste_percent').notNull().default(0), notes: text('notes'), ...timestamps });
-export const recipeItems = sqliteTable('recipe_items', { id: integer('id').primaryKey({ autoIncrement: true }), recipeId: integer('recipe_id').notNull().references(() => recipes.id), ingredientId: integer('ingredient_id').notNull().references(() => ingredients.id), quantity: real('quantity').notNull(), unit: text('unit').notNull() });
-export const products = sqliteTable('products', { id: integer('id').primaryKey({ autoIncrement: true }), ownerId: text('owner_id').references(() => users.id), recipeId: integer('recipe_id').references(() => recipes.id), name: text('name').notNull(), recipeQuantity: real('recipe_quantity').notNull(), laborMinutes: real('labor_minutes').notNull().default(0), hourlyLaborCents: integer('hourly_labor_cents').notNull().default(0), deliveryCents: integer('delivery_cents').notNull().default(0), commissionPercent: real('commission_percent').notNull().default(0), taxPercent: real('tax_percent').notNull().default(0), targetMarginPercent: real('target_margin_percent').notNull().default(50), markup: real('markup'), includeFixedCost: integer('include_fixed_cost', { mode: 'boolean' }).notNull().default(true), ...timestamps });
-export const productComponents = sqliteTable('product_components', { id: integer('id').primaryKey({ autoIncrement: true }), productId: integer('product_id').notNull().references(() => products.id), packagingItemId: integer('packaging_item_id').references(() => packagingItems.id), ingredientId: integer('ingredient_id').references(() => ingredients.id), quantity: real('quantity').notNull().default(1), componentType: text('component_type').notNull() });
-export const fixedExpenses = sqliteTable('fixed_expenses', { id: integer('id').primaryKey({ autoIncrement: true }), ownerId: text('owner_id').references(() => users.id), name: text('name').notNull(), category: text('category').notNull(), monthlyCents: integer('monthly_cents').notNull(), active: integer('active', { mode: 'boolean' }).notNull().default(true), ...timestamps });
-export const priceSimulations = sqliteTable('price_simulations', { id: integer('id').primaryKey({ autoIncrement: true }), ownerId: text('owner_id').references(() => users.id), productId: integer('product_id').references(() => products.id), scenario: text('scenario').notNull(), inputsJson: text('inputs_json').notNull(), suggestedPriceCents: integer('suggested_price_cents').notNull(), ...timestamps });
-export const auditRecords = sqliteTable('audit_records', { id: integer('id').primaryKey({ autoIncrement: true }), ownerId: text('owner_id'), kind: text('kind').notNull(), payloadJson: text('payload_json').notNull(), ...timestamps });
+const timestamps = {
+  createdAt: text('created_at')
+    .notNull()
+    .default(sql`CURRENT_TIMESTAMP`),
+  updatedAt: text('updated_at')
+    .notNull()
+    .default(sql`CURRENT_TIMESTAMP`),
+};
+export const users = sqliteTable('users', {
+  id: text('id').primaryKey(),
+  email: text('email').notNull().unique(),
+  name: text('name'),
+  role: text('role').notNull().default('admin'),
+  ...timestamps,
+});
+export const suppliers = sqliteTable('suppliers', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  ownerId: text('owner_id').references(() => users.id),
+  name: text('name').notNull(),
+  contact: text('contact'),
+  notes: text('notes'),
+  ...timestamps,
+});
+export const ingredients = sqliteTable('ingredients', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  ownerId: text('owner_id').references(() => users.id),
+  supplierId: integer('supplier_id').references(() => suppliers.id),
+  name: text('name').notNull(),
+  purchaseUnit: text('purchase_unit').notNull(),
+  purchasedQuantity: real('purchased_quantity').notNull(),
+  priceCents: integer('price_cents').notNull(),
+  fractionUnit: text('fraction_unit').notNull().default('g'),
+  expiresAt: text('expires_at'),
+  lastPurchaseAt: text('last_purchase_at'),
+  active: integer('active', { mode: 'boolean' }).notNull().default(true),
+  ...timestamps,
+});
+export const purchaseHistory = sqliteTable('purchase_history', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  ingredientId: integer('ingredient_id')
+    .notNull()
+    .references(() => ingredients.id),
+  supplierId: integer('supplier_id').references(() => suppliers.id),
+  quantity: real('quantity').notNull(),
+  priceCents: integer('price_cents').notNull(),
+  purchasedAt: text('purchased_at').notNull(),
+  ...timestamps,
+});
+export const packagingItems = sqliteTable('packaging_items', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  ownerId: text('owner_id').references(() => users.id),
+  name: text('name').notNull(),
+  category: text('category').notNull(),
+  packQuantity: real('pack_quantity').notNull(),
+  priceCents: integer('price_cents').notNull(),
+  supplierId: integer('supplier_id').references(() => suppliers.id),
+  ...timestamps,
+});
+export const recipes = sqliteTable('recipes', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  ownerId: text('owner_id').references(() => users.id),
+  name: text('name').notNull(),
+  yieldQuantity: real('yield_quantity').notNull(),
+  yieldUnit: text('yield_unit').notNull(),
+  wastePercent: real('waste_percent').notNull().default(0),
+  notes: text('notes'),
+  ...timestamps,
+});
+export const recipeItems = sqliteTable('recipe_items', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  recipeId: integer('recipe_id')
+    .notNull()
+    .references(() => recipes.id),
+  ingredientId: integer('ingredient_id')
+    .notNull()
+    .references(() => ingredients.id),
+  quantity: real('quantity').notNull(),
+  unit: text('unit').notNull(),
+});
+export const products = sqliteTable('products', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  ownerId: text('owner_id').references(() => users.id),
+  recipeId: integer('recipe_id').references(() => recipes.id),
+  name: text('name').notNull(),
+  recipeQuantity: real('recipe_quantity').notNull(),
+  laborMinutes: real('labor_minutes').notNull().default(0),
+  hourlyLaborCents: integer('hourly_labor_cents').notNull().default(0),
+  deliveryCents: integer('delivery_cents').notNull().default(0),
+  commissionPercent: real('commission_percent').notNull().default(0),
+  taxPercent: real('tax_percent').notNull().default(0),
+  targetMarginPercent: real('target_margin_percent').notNull().default(50),
+  markup: real('markup'),
+  includeFixedCost: integer('include_fixed_cost', { mode: 'boolean' })
+    .notNull()
+    .default(true),
+  ...timestamps,
+});
+export const productComponents = sqliteTable('product_components', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  productId: integer('product_id')
+    .notNull()
+    .references(() => products.id),
+  packagingItemId: integer('packaging_item_id').references(
+    () => packagingItems.id,
+  ),
+  ingredientId: integer('ingredient_id').references(() => ingredients.id),
+  quantity: real('quantity').notNull().default(1),
+  componentType: text('component_type').notNull(),
+});
+export const fixedExpenses = sqliteTable('fixed_expenses', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  ownerId: text('owner_id').references(() => users.id),
+  name: text('name').notNull(),
+  category: text('category').notNull(),
+  monthlyCents: integer('monthly_cents').notNull(),
+  active: integer('active', { mode: 'boolean' }).notNull().default(true),
+  ...timestamps,
+});
+export const priceSimulations = sqliteTable('price_simulations', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  ownerId: text('owner_id').references(() => users.id),
+  productId: integer('product_id').references(() => products.id),
+  scenario: text('scenario').notNull(),
+  inputsJson: text('inputs_json').notNull(),
+  suggestedPriceCents: integer('suggested_price_cents').notNull(),
+  ...timestamps,
+});
+export const auditRecords = sqliteTable('audit_records', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  ownerId: text('owner_id'),
+  kind: text('kind').notNull(),
+  payloadJson: text('payload_json').notNull(),
+  ...timestamps,
+});
+export const auditLogs = sqliteTable('audit_logs', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  ownerId: text('owner_id').notNull(),
+  recordId: integer('record_id'),
+  kind: text('kind').notNull(),
+  action: text('action').notNull(),
+  beforeJson: text('before_json'),
+  afterJson: text('after_json'),
+  ...timestamps,
+});
