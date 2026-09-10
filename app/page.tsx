@@ -36,6 +36,11 @@ import {
   Filter,
   ArrowDownRight,
   PieChart,
+  Upload,
+  Database,
+  ShieldCheck,
+  HardDrive,
+  RefreshCw,
   UserRound,
   UtensilsCrossed,
   WalletCards,
@@ -211,27 +216,84 @@ const nav = [
   { label: 'Relatórios', icon: FileText },
 ];
 
-let cachedRecords: ApiRecord[] | null = null;
+const PERSISTENCE_STORAGE_KEY = 'mousse_persisted_records_v4';
+
+function loadPersistedRecords(): ApiRecord[] | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = localStorage.getItem(PERSISTENCE_STORAGE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+    }
+  } catch (e) {
+    console.warn('Erro ao ler cache local:', e);
+  }
+  return null;
+}
+
+function savePersistedRecords(records: ApiRecord[]) {
+  if (typeof window === 'undefined') return;
+  try {
+    localStorage.setItem(PERSISTENCE_STORAGE_KEY, JSON.stringify(records));
+  } catch (e) {
+    console.warn('Erro ao salvar cache local:', e);
+  }
+}
+
+let cachedRecords: ApiRecord[] | null = typeof window !== 'undefined' ? loadPersistedRecords() : null;
 let pendingFetch: Promise<ApiRecord[]> | null = null;
 const recordListeners = new Set<(records: ApiRecord[]) => void>();
 
 function notifyListeners() {
   if (cachedRecords) {
     const data = cachedRecords;
+    savePersistedRecords(data);
     recordListeners.forEach((fn) => fn(data));
   }
 }
 
 async function requestRecords<T = Record<string, unknown>>(forceFresh = false): Promise<ApiRecord<T>[]> {
+  if (!cachedRecords) {
+    const local = loadPersistedRecords();
+    if (local) {
+      cachedRecords = local;
+      notifyListeners();
+    }
+  }
+
   if (cachedRecords && !forceFresh) {
     if (!pendingFetch) {
       pendingFetch = authenticatedFetch('/api/records')
         .then(async (res) => {
           if (res.ok) {
             const fresh = (await res.json()) as ApiRecord[];
-            cachedRecords = fresh;
-            notifyListeners();
-            return fresh as ApiRecord<T>[];
+            if (fresh.length > 0) {
+              cachedRecords = fresh;
+              notifyListeners();
+              return fresh as ApiRecord<T>[];
+            } else if (cachedRecords && cachedRecords.length > 0) {
+              // Auto-sync local records to server if server is empty
+              try {
+                const syncRes = await authenticatedFetch('/api/records', {
+                  method: 'POST',
+                  headers: { 'content-type': 'application/json' },
+                  body: JSON.stringify({
+                    records: cachedRecords.map((r) => ({ kind: r.kind, payload: r.payload })),
+                  }),
+                });
+                if (syncRes.ok) {
+                  const synced = (await syncRes.json()) as { records: ApiRecord[] };
+                  if (synced.records?.length) {
+                    cachedRecords = synced.records;
+                    notifyListeners();
+                    return cachedRecords as ApiRecord<T>[];
+                  }
+                }
+              } catch (syncErr) {
+                console.warn('Auto-sync error:', syncErr);
+              }
+            }
           }
           return (cachedRecords || []) as ApiRecord<T>[];
         })
@@ -253,6 +315,37 @@ async function requestRecords<T = Record<string, unknown>>(forceFresh = false): 
         throw new Error('Sua sessão expirou. Atualize a página para entrar novamente.');
       if (!response.ok) throw new Error('Não foi possível carregar os dados.');
       const data = (await response.json()) as ApiRecord[];
+      if (data.length > 0) {
+        cachedRecords = data;
+        notifyListeners();
+        return data as ApiRecord<T>[];
+      } else {
+        const local = loadPersistedRecords();
+        if (local && local.length > 0) {
+          try {
+            const syncRes = await authenticatedFetch('/api/records', {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({
+                records: local.map((r) => ({ kind: r.kind, payload: r.payload })),
+              }),
+            });
+            if (syncRes.ok) {
+              const synced = (await syncRes.json()) as { records: ApiRecord[] };
+              if (synced.records?.length) {
+                cachedRecords = synced.records;
+                notifyListeners();
+                return cachedRecords as ApiRecord<T>[];
+              }
+            }
+          } catch (syncErr) {
+            console.warn('Auto-sync error:', syncErr);
+          }
+          cachedRecords = local;
+          notifyListeners();
+          return local as ApiRecord<T>[];
+        }
+      }
       cachedRecords = data;
       notifyListeners();
       return data as ApiRecord<T>[];
@@ -262,6 +355,63 @@ async function requestRecords<T = Record<string, unknown>>(forceFresh = false): 
     });
 
   return pendingFetch;
+}
+
+function downloadCompleteBackup() {
+  const records = cachedRecords || loadPersistedRecords() || [];
+  const backup = {
+    appName: 'Doce Margem / Mousse',
+    version: '2.0',
+    exportDate: new Date().toISOString(),
+    totalRecords: records.length,
+    records,
+  };
+  const blob = new Blob([JSON.stringify(backup, null, 2)], {
+    type: 'application/json;charset=utf-8',
+  });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `mousse-backup-${new Date().toISOString().slice(0, 10)}.json`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+async function restoreCompleteBackupFromFile(
+  file: File,
+  onSuccess: (count: number) => void,
+  onError: (msg: string) => void,
+) {
+  try {
+    const text = await file.text();
+    const data = JSON.parse(text);
+    const records = Array.isArray(data) ? data : data.records;
+    if (!Array.isArray(records) || records.length === 0) {
+      throw new Error('O arquivo de backup não possui dados válidos.');
+    }
+
+    const payloadList = records.map((r: any) => ({
+      kind: r.kind || 'product',
+      payload: r.payload || r,
+    }));
+
+    const response = await authenticatedFetch('/api/records', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ records: payloadList }),
+    });
+
+    if (!response.ok) {
+      throw new Error('Falha ao restaurar registros no servidor.');
+    }
+
+    const resData = (await response.json()) as { count?: number };
+    const fresh = await requestRecords(true);
+    savePersistedRecords(fresh);
+    onSuccess(resData.count || records.length);
+  } catch (err: any) {
+    onError(err.message || 'Erro ao processar o arquivo de backup.');
+  }
 }
 
 function useRecords<T extends object>(kind: Kind) {
@@ -1241,6 +1391,96 @@ function AccountView({
           </form>
         )}
       </section>
+
+      <section className="panel" style={{ padding: '1.5rem', marginTop: '1.5rem' }}>
+        <div className="panel-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem', marginBottom: '1rem' }}>
+          <div>
+            <p className="section-kicker">PROTEÇÃO CONTRA PERDAS</p>
+            <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', margin: 0 }}>
+              <ShieldCheck size={22} style={{ color: '#10b981' }} /> Backup & Segurança dos Dados
+            </h2>
+            <p style={{ fontSize: '0.85rem', color: 'var(--muted-foreground)', marginTop: '0.25rem' }}>
+              Seus dados (produtos, receitas, despesas, vendas e insumos) são salvos de forma redundante: no seu navegador e no banco de dados.
+            </p>
+          </div>
+          <span className="rate-badge" style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem', color: '#34d399', background: 'rgba(16, 185, 129, 0.15)' }}>
+            <Database size={14} /> Auto-sincronizado
+          </span>
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '1rem' }}>
+          <div className="panel" style={{ padding: '1.25rem', background: 'var(--card)' }}>
+            <h3 style={{ fontSize: '1rem', margin: '0 0 0.4rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+              <Download size={18} style={{ color: 'var(--primary)' }} /> Baixar Cópia de Segurança
+            </h3>
+            <p style={{ fontSize: '0.82rem', color: 'var(--muted-foreground)', margin: '0 0 1rem' }}>
+              Gera um arquivo JSON completo com todos os seus cadastros e movimentações para guardar no seu computador ou celular.
+            </p>
+            <Button
+              type="button"
+              onClick={downloadCompleteBackup}
+              className="primary-action"
+              style={{ width: '100%' }}
+            >
+              <Download size={16} /> Baixar Backup Completo (.json)
+            </Button>
+          </div>
+
+          <div className="panel" style={{ padding: '1.25rem', background: 'var(--card)' }}>
+            <h3 style={{ fontSize: '1rem', margin: '0 0 0.4rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+              <Upload size={18} style={{ color: 'var(--primary)' }} /> Restaurar Cópia de Segurança
+            </h3>
+            <p style={{ fontSize: '0.82rem', color: 'var(--muted-foreground)', margin: '0 0 1rem' }}>
+              Recupera todos os seus produtos, vendas e despesas a partir de um arquivo de backup salvo anteriormente.
+            </p>
+            <label
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '0.5rem',
+                padding: '0.65rem 1rem',
+                borderRadius: '0.5rem',
+                border: '1px solid var(--border)',
+                background: 'var(--accent)',
+                color: 'var(--foreground)',
+                cursor: 'pointer',
+                fontWeight: 600,
+                fontSize: '0.85rem',
+                textAlign: 'center',
+              }}
+            >
+              <Upload size={16} /> Selecionar Arquivo de Backup
+              <input
+                type="file"
+                accept=".json"
+                style={{ display: 'none' }}
+                onChange={async (e) => {
+                  const file = e.target.files?.[0];
+                  if (file) {
+                    setSaving(true);
+                    setError('');
+                    setNotice('');
+                    await restoreCompleteBackupFromFile(
+                      file,
+                      (count) => {
+                        setSaving(false);
+                        setNotice(`Backup restaurado com sucesso! ${count} registros recuperados.`);
+                      },
+                      (msg) => {
+                        setSaving(false);
+                        setError(msg);
+                      },
+                    );
+                    e.target.value = '';
+                  }
+                }}
+              />
+            </label>
+          </div>
+        </div>
+      </section>
+
       {notice && <div className="save-toast"><CheckCircle2 size={16} /> {notice}</div>}
       {error && <div className="form-error">{error}</div>}
     </>
@@ -3989,6 +4229,9 @@ function ReportsView() {
         subtitle="Extrato consolidado de tudo o que foi lançado, DRE completo e apuração de lucro real."
         action={
           <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+            <Button onClick={downloadCompleteBackup} variant="outline" className="button-secondary">
+              <Database size={15} /> Backup (.json)
+            </Button>
             <Button onClick={exportDreCsv} variant="outline" className="button-secondary">
               <Download size={15} /> Exportar DRE
             </Button>

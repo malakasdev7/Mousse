@@ -77,13 +77,37 @@ export async function POST(request: Request) {
     const body = (await parseBody(request)) as {
       kind?: unknown;
       payload?: unknown;
+      records?: Array<{ kind: unknown; payload: unknown }>;
     };
+
+    const db = await getDb();
+
+    // Handle batch sync / restore
+    if (Array.isArray(body.records) && body.records.length > 0) {
+      const inserted = [];
+      for (const item of body.records) {
+        if (isRecordKind(item.kind)) {
+          const validated = validatePayload(item.kind, item.payload);
+          if (validated.ok) {
+            const payloadJson = JSON.stringify(validated.value);
+            const res = await db
+              .insert(auditRecords)
+              .values({ ownerId: user.dataOwnerId, kind: item.kind, payloadJson })
+              .returning();
+            if (res[0]) {
+              inserted.push({ ...res[0], payload: validated.value });
+            }
+          }
+        }
+      }
+      return json({ ok: true, count: inserted.length, records: inserted }, { status: 201 });
+    }
+
     if (!isRecordKind(body.kind))
       return json({ error: 'Tipo de registro inválido.' }, { status: 400 });
     const validated = validatePayload(body.kind, body.payload);
     if (!validated.ok) return json({ error: validated.error }, { status: 422 });
     const payloadJson = JSON.stringify(validated.value);
-    const db = await getDb();
     const result = await db
       .insert(auditRecords)
       .values({ ownerId: user.dataOwnerId, kind: body.kind, payloadJson })
