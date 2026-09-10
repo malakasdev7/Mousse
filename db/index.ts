@@ -29,6 +29,9 @@ function initTables(c: Client) {
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );`,
+    `CREATE INDEX IF NOT EXISTS idx_audit_records_owner ON audit_records(owner_id);`,
+    `CREATE INDEX IF NOT EXISTS idx_audit_records_kind ON audit_records(kind);`,
+    `CREATE INDEX IF NOT EXISTS idx_audit_logs_owner ON audit_logs(owner_id);`,
   ]).catch((err) => {
     console.warn('Failed to auto-init SQLite tables:', err);
   });

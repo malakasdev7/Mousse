@@ -83,7 +83,7 @@ export async function POST(request: Request) {
       .insert(auditRecords)
       .values({ ownerId: user.dataOwnerId, kind: body.kind, payloadJson })
       .returning();
-    await writeAudit({
+    void writeAudit({
       ownerId: user.dataOwnerId,
       recordId: result[0].id,
       kind: body.kind,
@@ -137,7 +137,7 @@ export async function PUT(request: Request) {
         ),
       )
       .returning();
-    await writeAudit({
+    void writeAudit({
       ownerId: user.dataOwnerId,
       recordId: body.id!,
       kind: current[0].kind,
@@ -179,7 +179,7 @@ export async function DELETE(request: Request) {
       .limit(1);
     if (!current[0])
       return json({ error: 'Registro não encontrado.' }, { status: 404 });
-    await writeAudit({
+    void writeAudit({
       ownerId: user.dataOwnerId,
       recordId: body.id!,
       kind: current[0].kind,

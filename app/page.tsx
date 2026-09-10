@@ -191,66 +191,174 @@ const nav = [
   { label: 'Relatórios', icon: FileText },
 ];
 
-async function requestRecords<T = Record<string, unknown>>() {
-  const response = await authenticatedFetch('/api/records');
-  if (response.status === 401)
-    throw new Error(
-      'Sua sessão expirou. Atualize a página para entrar novamente.',
-    );
-  if (!response.ok) throw new Error('Não foi possível carregar os dados.');
-  return response.json() as Promise<ApiRecord<T>[]>;
+let cachedRecords: ApiRecord[] | null = null;
+let pendingFetch: Promise<ApiRecord[]> | null = null;
+const recordListeners = new Set<(records: ApiRecord[]) => void>();
+
+function notifyListeners() {
+  if (cachedRecords) {
+    const data = cachedRecords;
+    recordListeners.forEach((fn) => fn(data));
+  }
+}
+
+async function requestRecords<T = Record<string, unknown>>(forceFresh = false): Promise<ApiRecord<T>[]> {
+  if (cachedRecords && !forceFresh) {
+    if (!pendingFetch) {
+      pendingFetch = authenticatedFetch('/api/records')
+        .then(async (res) => {
+          if (res.ok) {
+            const fresh = (await res.json()) as ApiRecord[];
+            cachedRecords = fresh;
+            notifyListeners();
+            return fresh as ApiRecord<T>[];
+          }
+          return (cachedRecords || []) as ApiRecord<T>[];
+        })
+        .catch(() => (cachedRecords || []) as ApiRecord<T>[])
+        .finally(() => {
+          pendingFetch = null;
+        });
+    }
+    return cachedRecords as ApiRecord<T>[];
+  }
+
+  if (pendingFetch) {
+    return pendingFetch as Promise<ApiRecord<T>[]>;
+  }
+
+  pendingFetch = authenticatedFetch('/api/records')
+    .then(async (response) => {
+      if (response.status === 401)
+        throw new Error('Sua sessão expirou. Atualize a página para entrar novamente.');
+      if (!response.ok) throw new Error('Não foi possível carregar os dados.');
+      const data = (await response.json()) as ApiRecord[];
+      cachedRecords = data;
+      notifyListeners();
+      return data as ApiRecord<T>[];
+    })
+    .finally(() => {
+      pendingFetch = null;
+    });
+
+  return pendingFetch;
 }
 
 function useRecords<T extends object>(kind: Kind) {
-  const [items, setItems] = useState<Stored<T>[]>([]);
-  const [loading, setLoading] = useState(true);
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      const records = await requestRecords<T>();
+  const [items, setItems] = useState<Stored<T>[]>(() => {
+    if (cachedRecords) {
+      return cachedRecords
+        .filter((record) => record.kind === kind)
+        .map((record) => ({ ...(record.payload as T), id: record.id }));
+    }
+    return [];
+  });
+  const [loading, setLoading] = useState(!cachedRecords);
+
+  useEffect(() => {
+    const handler = (records: ApiRecord[]) => {
       setItems(
         records
           .filter((record) => record.kind === kind)
-          .map((record) => ({ ...record.payload, id: record.id })),
+          .map((record) => ({ ...(record.payload as T), id: record.id })),
       );
-    } finally {
       setLoading(false);
+    };
+
+    recordListeners.add(handler);
+    if (cachedRecords) {
+      handler(cachedRecords);
+    } else {
+      requestRecords().catch(() => setLoading(false));
     }
+
+    return () => {
+      recordListeners.delete(handler);
+    };
   }, [kind]);
-  useEffect(() => {
-    load().catch(() => setLoading(false));
-  }, [load]);
 
   async function save(payload: T, id?: number) {
-    const response = await authenticatedFetch('/api/records', {
-      method: id ? 'PUT' : 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(id ? { id, payload } : { kind, payload }),
-    });
-    if (!response.ok) {
-      const body = (await response.json().catch(() => null)) as {
-        error?: string;
-      } | null;
-      throw new Error(body?.error || 'Não foi possível salvar.');
+    const tempId = id || -Math.floor(Math.random() * 1000000 + 1);
+    const optimisticItem: Stored<T> = { ...payload, id: tempId };
+
+    if (id) {
+      setItems((current) => current.map((item) => (item.id === id ? optimisticItem : item)));
+      if (cachedRecords) {
+        cachedRecords = cachedRecords.map((rec) =>
+          rec.id === id ? { ...rec, payload: payload as Record<string, unknown> } : rec,
+        );
+        notifyListeners();
+      }
+    } else {
+      setItems((current) => [optimisticItem, ...current]);
+      if (cachedRecords) {
+        cachedRecords = [
+          { id: tempId, kind, payload: payload as Record<string, unknown> },
+          ...cachedRecords,
+        ];
+        notifyListeners();
+      }
     }
-    const record = (await response.json()) as ApiRecord<T>;
-    const saved = { ...record.payload, id: record.id } as Stored<T>;
-    setItems((current) =>
-      id
-        ? current.map((item) => (item.id === id ? saved : item))
-        : [saved, ...current],
-    );
-    return saved;
+
+    try {
+      const response = await authenticatedFetch('/api/records', {
+        method: id ? 'PUT' : 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(id ? { id, payload } : { kind, payload }),
+      });
+
+      if (!response.ok) {
+        const body = (await response.json().catch(() => null)) as { error?: string } | null;
+        throw new Error(body?.error || 'Não foi possível salvar.');
+      }
+
+      const record = (await response.json()) as ApiRecord<T>;
+      const realItem = { ...record.payload, id: record.id } as Stored<T>;
+
+      setItems((current) =>
+        current.map((item) => (item.id === tempId ? realItem : item)),
+      );
+
+      if (cachedRecords) {
+        cachedRecords = cachedRecords.map((rec) =>
+          rec.id === tempId ? (record as ApiRecord) : rec,
+        );
+        notifyListeners();
+      }
+
+      return realItem;
+    } catch (err) {
+      if (!id) {
+        setItems((current) => current.filter((item) => item.id !== tempId));
+        if (cachedRecords) {
+          cachedRecords = cachedRecords.filter((rec) => rec.id !== tempId);
+          notifyListeners();
+        }
+      }
+      throw err;
+    }
   }
+
   async function remove(id: number) {
-    const response = await authenticatedFetch('/api/records', {
-      method: 'DELETE',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ id }),
-    });
-    if (!response.ok) throw new Error('Não foi possível excluir.');
     setItems((current) => current.filter((item) => item.id !== id));
+    if (cachedRecords) {
+      cachedRecords = cachedRecords.filter((rec) => rec.id !== id);
+      notifyListeners();
+    }
+
+    try {
+      const response = await authenticatedFetch('/api/records', {
+        method: 'DELETE',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ id }),
+      });
+      if (!response.ok) throw new Error('Não foi possível excluir.');
+    } catch (err) {
+      requestRecords(true).catch(() => {});
+      throw err;
+    }
   }
+
   return { items, loading, save, remove };
 }
 
