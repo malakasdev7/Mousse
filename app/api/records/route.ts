@@ -30,12 +30,10 @@ function invalidRequest(error: unknown) {
 
 async function writeAudit(values: typeof auditLogs.$inferInsert) {
   try {
-    await getDb().insert(auditLogs).values(values);
-  } catch {
-    // Keeps CRUD available while a newly deployed, non-destructive audit migration is pending.
-    console.warn(
-      'Audit log unavailable; apply migration 0003_validation_and_audit.',
-    );
+    const db = await getDb();
+    await db.insert(auditLogs).values(values);
+  } catch (err) {
+    console.warn('Audit log write error:', err);
   }
 }
 
@@ -46,18 +44,24 @@ export async function GET(request: Request) {
       { error: 'Sessão expirada. Entre novamente.' },
       { status: 401 },
     );
-  const records = await getDb()
-    .select()
-    .from(auditRecords)
-    .where(eq(auditRecords.ownerId, user.dataOwnerId))
-    .orderBy(desc(auditRecords.id))
-    .limit(500);
-  return json(
-    records.map((record) => ({
-      ...record,
-      payload: JSON.parse(record.payloadJson),
-    })),
-  );
+  try {
+    const db = await getDb();
+    const records = await db
+      .select()
+      .from(auditRecords)
+      .where(eq(auditRecords.ownerId, user.dataOwnerId))
+      .orderBy(desc(auditRecords.id))
+      .limit(500);
+    return json(
+      records.map((record) => ({
+        ...record,
+        payload: JSON.parse(record.payloadJson),
+      })),
+    );
+  } catch (err) {
+    console.error('GET records error:', err);
+    return json([], { status: 200 });
+  }
 }
 
 export async function POST(request: Request) {
@@ -79,7 +83,8 @@ export async function POST(request: Request) {
     const validated = validatePayload(body.kind, body.payload);
     if (!validated.ok) return json({ error: validated.error }, { status: 422 });
     const payloadJson = JSON.stringify(validated.value);
-    const result = await getDb()
+    const db = await getDb();
+    const result = await db
       .insert(auditRecords)
       .values({ ownerId: user.dataOwnerId, kind: body.kind, payloadJson })
       .returning();
@@ -92,6 +97,7 @@ export async function POST(request: Request) {
     });
     return json({ ...result[0], payload: validated.value }, { status: 201 });
   } catch (error) {
+    console.error('POST records error:', error);
     return invalidRequest(error);
   }
 }
@@ -112,7 +118,8 @@ export async function PUT(request: Request) {
     };
     if (!Number.isInteger(body.id) || Number(body.id) <= 0)
       return json({ error: 'Registro inválido.' }, { status: 400 });
-    const current = await getDb()
+    const db = await getDb();
+    const current = await db
       .select()
       .from(auditRecords)
       .where(
@@ -127,7 +134,7 @@ export async function PUT(request: Request) {
     const validated = validatePayload(current[0].kind, body.payload);
     if (!validated.ok) return json({ error: validated.error }, { status: 422 });
     const payloadJson = JSON.stringify(validated.value);
-    const result = await getDb()
+    const result = await db
       .update(auditRecords)
       .set({ payloadJson, updatedAt: new Date().toISOString() })
       .where(
@@ -147,6 +154,7 @@ export async function PUT(request: Request) {
     });
     return json({ ...result[0], payload: validated.value });
   } catch (error) {
+    console.error('PUT records error:', error);
     return invalidRequest(error);
   }
 }
@@ -167,7 +175,8 @@ export async function DELETE(request: Request) {
     const body = (await parseBody(request)) as { id?: number };
     if (!Number.isInteger(body.id) || Number(body.id) <= 0)
       return json({ error: 'Registro inválido.' }, { status: 400 });
-    const current = await getDb()
+    const db = await getDb();
+    const current = await db
       .select()
       .from(auditRecords)
       .where(
@@ -186,7 +195,7 @@ export async function DELETE(request: Request) {
       action: 'delete',
       beforeJson: current[0].payloadJson,
     });
-    await getDb()
+    await db
       .delete(auditRecords)
       .where(
         and(
@@ -196,6 +205,7 @@ export async function DELETE(request: Request) {
       );
     return json({ ok: true });
   } catch (error) {
+    console.error('DELETE records error:', error);
     return invalidRequest(error);
   }
 }
