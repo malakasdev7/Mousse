@@ -28,6 +28,7 @@ import {
   ShoppingBasket,
   Sparkles,
   Sun,
+  Trash2,
   TrendingDown,
   TrendingUp,
   Printer,
