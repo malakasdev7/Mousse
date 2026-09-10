@@ -1,3 +1,5 @@
+import { verifySessionToken } from './crypto-auth';
+
 export type AppRole = 'admin' | 'employee' | 'viewer';
 export type CurrentUser = {
   id: string;
@@ -33,26 +35,22 @@ export async function requireUser(request: Request): Promise<CurrentUser | null>
   const token = authorization?.match(/^Bearer\s+(.+)$/i)?.[1];
   if (!token) return null;
 
-  // 1. Direct / Standalone session token
+  // 1. Direct cryptographically signed session token
   if (token.startsWith('dm_')) {
-    try {
-      const payload = JSON.parse(
-        Buffer.from(token.slice(3), 'base64url').toString('utf-8'),
-      );
-      if (payload && payload.username && payload.id) {
-        return {
-          id: String(payload.id),
-          username: String(payload.username),
-          name: String(payload.name || payload.username),
-          role: (payload.role || 'admin') as AppRole,
-          storeId: String(payload.storeId || 'store_main'),
-          dataOwnerId: String(payload.dataOwnerId || payload.id),
-        };
-      }
-    } catch {
-      // fallback
+    const verified = verifySessionToken(token);
+    if (verified) {
+      return {
+        id: verified.id,
+        username: verified.username,
+        name: verified.name,
+        role: verified.role,
+        storeId: verified.storeId,
+        dataOwnerId: verified.dataOwnerId,
+      };
     }
+    return null;
   }
+
 
   // 2. Supabase token fallback
   const authUser = await supabaseJson<AuthUser>('/auth/v1/user', token);
