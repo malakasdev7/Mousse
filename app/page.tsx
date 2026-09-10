@@ -28,8 +28,13 @@ import {
   ShoppingBasket,
   Sparkles,
   Sun,
-  Trash2,
+  TrendingDown,
   TrendingUp,
+  Printer,
+  Calendar,
+  Filter,
+  ArrowDownRight,
+  PieChart,
   UserRound,
   UtensilsCrossed,
   WalletCards,
@@ -92,8 +97,22 @@ type Ingredient = {
   notes?: string;
   active?: boolean;
 };
-type Packaging = { name: string; type: string; pack: number; price: number };
-type Expense = { name: string; category: string; value: number };
+type Packaging = {
+  name: string;
+  type: string;
+  pack: number;
+  price: number;
+};
+type Expense = {
+  name: string;
+  category: string;
+  value: number;
+  type?: 'monthly' | 'one_off';
+  date?: string;
+  paymentMethod?: string;
+  dueDay?: string;
+  notes?: string;
+};
 type RecipeItem = {
   ingredientId: number;
   name: string;
@@ -1602,29 +1621,84 @@ function PackagingView() {
 function ExpensesView() {
   const records = useRecords<Expense>('expense');
   const [editing, setEditing] = useState<Stored<Expense> | null>(null);
-  const total = records.items.reduce((sum, item) => sum + item.value, 0);
+  const [expenseType, setExpenseType] = useState<'one_off' | 'monthly'>('one_off');
+  const [filterType, setFilterType] = useState<'all' | 'one_off' | 'monthly'>('all');
+  const [saved, setSaved] = useState(false);
+
+  useEffect(() => {
+    if (editing) {
+      setExpenseType(editing.type || 'monthly');
+    } else {
+      setExpenseType('one_off');
+    }
+  }, [editing]);
+
+  const oneOffTotal = records.items
+    .filter((item) => item.type === 'one_off' || (!item.type && item.date))
+    .reduce((sum, item) => sum + item.value, 0);
+
+  const monthlyTotal = records.items
+    .filter((item) => item.type === 'monthly' || (!item.type && !item.date))
+    .reduce((sum, item) => sum + item.value, 0);
+
+  const total = oneOffTotal + monthlyTotal;
+
+  const filteredItems = records.items.filter((item) => {
+    const isMonthly = item.type === 'monthly' || (!item.type && !item.date);
+    if (filterType === 'one_off') return !isMonthly;
+    if (filterType === 'monthly') return isMonthly;
+    return true;
+  });
+
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const formElement = event.currentTarget;
     const form = new FormData(formElement);
-    await records.save(
-      {
-        name: String(form.get('name')),
-        category: String(form.get('category')),
-        value: Number(form.get('value')),
-      },
-      editing?.id,
-    );
+    const item: Expense = {
+      name: String(form.get('name')),
+      category: String(form.get('category')),
+      value: Number(form.get('value')),
+      type: expenseType,
+      date: expenseType === 'one_off' ? String(form.get('date') || new Date().toISOString().slice(0, 10)) : undefined,
+      dueDay: expenseType === 'monthly' ? String(form.get('dueDay') || 'Dia 10') : undefined,
+      paymentMethod: String(form.get('paymentMethod') || 'PIX'),
+      notes: String(form.get('notes') || ''),
+    };
+
+    await records.save(item, editing?.id);
     setEditing(null);
     formElement.reset();
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2000);
   }
+
   return (
     <>
       <ModuleHeading
-        eyebrow="ESTRUTURA"
-        title="Despesas fixas e rateio"
-        subtitle="Mantenha os gastos mensais atualizados para formar preços sustentáveis."
+        eyebrow="FINANÇAS"
+        title="Gestão de despesas"
+        subtitle="Lance despesas pontuais do dia a dia (normais/avulsas) e custos fixos mensais."
       />
+      {saved && <SaveToast text="Despesa salva com sucesso" />}
+      
+      <div className="summary-strip" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '1rem', marginBottom: '1.5rem' }}>
+        <div className="panel" style={{ padding: '1.15rem' }}>
+          <p className="section-kicker" style={{ fontSize: '0.75rem', color: 'var(--muted-foreground)', marginBottom: '0.25rem' }}>DESPESAS NORMAIS / PONTUAIS</p>
+          <strong style={{ fontSize: '1.45rem', color: 'var(--foreground)' }}>{money.format(oneOffTotal)}</strong>
+          <p style={{ fontSize: '0.8rem', color: 'var(--muted-foreground)', marginTop: '0.25rem' }}>Gastos avulsos e operacionais</p>
+        </div>
+        <div className="panel" style={{ padding: '1.15rem' }}>
+          <p className="section-kicker" style={{ fontSize: '0.75rem', color: 'var(--muted-foreground)', marginBottom: '0.25rem' }}>DESPESAS FIXAS / MENSAIS</p>
+          <strong style={{ fontSize: '1.45rem', color: 'var(--foreground)' }}>{money.format(monthlyTotal)}</strong>
+          <p style={{ fontSize: '0.8rem', color: 'var(--muted-foreground)', marginTop: '0.25rem' }}>Estrutura e contas recorrentes</p>
+        </div>
+        <div className="panel" style={{ padding: '1.15rem', background: 'var(--accent)', border: '1px solid var(--border)' }}>
+          <p className="section-kicker" style={{ fontSize: '0.75rem', color: 'var(--primary)', marginBottom: '0.25rem' }}>TOTAL DE DESPESAS</p>
+          <strong style={{ fontSize: '1.45rem', color: 'var(--primary)' }}>{money.format(total)}</strong>
+          <p style={{ fontSize: '0.8rem', color: 'var(--muted-foreground)', marginTop: '0.25rem' }}>{records.items.length} lançamentos cadastrados</p>
+        </div>
+      </div>
+
       <div className="module-layout">
         <EditorPanel
           title={editing ? 'Editar despesa' : 'Nova despesa'}
@@ -1636,51 +1710,178 @@ function ExpensesView() {
             onSubmit={submit}
             className="data-form"
           >
+            <div className="form-group" style={{ marginBottom: '1rem' }}>
+              <span style={{ fontSize: '0.85rem', fontWeight: 600, display: 'block', marginBottom: '0.4rem' }}>Tipo de despesa</span>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem' }}>
+                <button
+                  type="button"
+                  onClick={() => setExpenseType('one_off')}
+                  style={{
+                    padding: '0.6rem 0.8rem',
+                    borderRadius: '0.5rem',
+                    border: expenseType === 'one_off' ? '2px solid var(--primary)' : '1px solid var(--border)',
+                    background: expenseType === 'one_off' ? 'var(--accent)' : 'var(--card)',
+                    color: expenseType === 'one_off' ? 'var(--primary)' : 'var(--foreground)',
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                    fontSize: '0.85rem',
+                  }}
+                >
+                  ⚡ Pontual / Normal (Avulsa)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setExpenseType('monthly')}
+                  style={{
+                    padding: '0.6rem 0.8rem',
+                    borderRadius: '0.5rem',
+                    border: expenseType === 'monthly' ? '2px solid var(--primary)' : '1px solid var(--border)',
+                    background: expenseType === 'monthly' ? 'var(--accent)' : 'var(--card)',
+                    color: expenseType === 'monthly' ? 'var(--primary)' : 'var(--foreground)',
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                    fontSize: '0.85rem',
+                  }}
+                >
+                  🗓️ Mensal / Fixa (Recorrente)
+                </button>
+              </div>
+            </div>
+
             <label>
-              Nome
-              <input name="name" required defaultValue={editing?.name} />
-            </label>
-            <label>
-              Categoria
+              <span>Nome da despesa</span>
               <input
-                name="category"
+                name="name"
                 required
-                defaultValue={editing?.category}
+                placeholder={expenseType === 'one_off' ? "Ex.: Gás, Utensílios novos, Manutenção..." : "Ex.: Aluguel, Internet, MEI..."}
+                defaultValue={editing?.name}
               />
             </label>
+
+            <div className="form-row">
+              <label>
+                <span>Categoria</span>
+                <select name="category" defaultValue={editing?.category || (expenseType === 'one_off' ? 'Operacional' : 'Estrutura')}>
+                  <option value="Operacional">Operacional & Produção</option>
+                  <option value="Utensílios e Ferramentas">Utensílios & Ferramentas</option>
+                  <option value="Energia, Água e Gás">Energia, Água & Gás</option>
+                  <option value="Estrutura e Aluguel">Estrutura & Aluguel</option>
+                  <option value="Administrativo e MEI">Administrativo & MEI</option>
+                  <option value="Marketing e Divulgação">Marketing & Divulgação</option>
+                  <option value="Logística e Frete">Logística & Frete</option>
+                  <option value="Manutenção e Reparos">Manutenção & Reparos</option>
+                  <option value="Outros">Outros</option>
+                </select>
+              </label>
+
+              <label>
+                <span>Valor (R$)</span>
+                <input
+                  name="value"
+                  type="number"
+                  step="0.01"
+                  min="0.01"
+                  required
+                  placeholder="0,00"
+                  defaultValue={editing?.value}
+                />
+              </label>
+            </div>
+
+            <div className="form-row">
+              {expenseType === 'one_off' ? (
+                <label>
+                  <span>Data do gasto</span>
+                  <input
+                    name="date"
+                    type="date"
+                    required
+                    defaultValue={editing?.date || new Date().toISOString().slice(0, 10)}
+                  />
+                </label>
+              ) : (
+                <label>
+                  <span>Vencimento mensal</span>
+                  <select name="dueDay" defaultValue={editing?.dueDay || 'Dia 10'}>
+                    <option value="Dia 05">Dia 05</option>
+                    <option value="Dia 10">Dia 10</option>
+                    <option value="Dia 15">Dia 15</option>
+                    <option value="Dia 20">Dia 20</option>
+                    <option value="Dia 25">Dia 25</option>
+                    <option value="Fim do mês">Fim do mês</option>
+                  </select>
+                </label>
+              )}
+
+              <label>
+                <span>Forma de pagamento</span>
+                <select name="paymentMethod" defaultValue={editing?.paymentMethod || 'PIX'}>
+                  <option value="PIX">PIX</option>
+                  <option value="Cartão de Crédito">Cartão de Crédito</option>
+                  <option value="Cartão de Débito">Cartão de Débito</option>
+                  <option value="Dinheiro">Dinheiro</option>
+                  <option value="Boleto">Boleto Bancário</option>
+                  <option value="Transferência">Transferência / TED</option>
+                </select>
+              </label>
+            </div>
+
             <label>
-              Valor mensal
+              <span>Observações (opcional)</span>
               <input
-                name="value"
-                type="number"
-                step="0.01"
-                required
-                defaultValue={editing?.value}
+                name="notes"
+                placeholder="Ex.: Comprado no fornecedor X, NF 1234..."
+                defaultValue={editing?.notes}
               />
             </label>
+
             <SaveButton editing={!!editing} />
           </form>
         </EditorPanel>
+
         <section className="panel data-panel">
-          <div className="panel-header">
-            <DataHeader title={money.format(total)} />
+          <div className="panel-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.75rem' }}>
+            <div style={{ display: 'flex', gap: '0.35rem' }}>
+              <button
+                type="button"
+                className={`tag-button ${filterType === 'all' ? 'active' : ''}`}
+                onClick={() => setFilterType('all')}
+              >
+                Todas ({records.items.length})
+              </button>
+              <button
+                type="button"
+                className={`tag-button ${filterType === 'one_off' ? 'active' : ''}`}
+                onClick={() => setFilterType('one_off')}
+              >
+                ⚡ Pontuais ({records.items.filter((i) => i.type === 'one_off' || (!i.type && i.date)).length})
+              </button>
+              <button
+                type="button"
+                className={`tag-button ${filterType === 'monthly' ? 'active' : ''}`}
+                onClick={() => setFilterType('monthly')}
+              >
+                🗓️ Mensais ({records.items.filter((i) => i.type === 'monthly' || (!i.type && !i.date)).length})
+              </button>
+            </div>
             <span className="rate-badge">
-              {money.format(total / 650)} / unidade
+              Total: {money.format(filteredItems.reduce((s, i) => s + i.value, 0))}
             </span>
           </div>
+
           {records.loading ? (
             <Loading />
-          ) : records.items.length ? (
+          ) : filteredItems.length ? (
             <ExpenseTable
-              items={records.items}
+              items={filteredItems}
               onEdit={setEditing}
               onDelete={(id) => confirmDelete(() => records.remove(id))}
             />
           ) : (
             <EmptyState
               icon={<WalletCards />}
-              title="Nenhuma despesa"
-              text="Cadastre aluguel, energia, pró-labore e demais gastos."
+              title="Nenhuma despesa encontrada"
+              text="Cadastre gastos pontuais (normais) ou custos fixos mensais."
             />
           )}
         </section>
@@ -3054,29 +3255,70 @@ function ExpenseTable({
         <thead>
           <tr>
             <th>Despesa</th>
+            <th>Tipo</th>
             <th>Categoria</th>
-            <th>Valor mensal</th>
-            <th>Rateio / 650 un.</th>
+            <th>Data / Venc.</th>
+            <th>Pagamento</th>
+            <th>Valor</th>
             <th />
           </tr>
         </thead>
         <tbody>
-          {items.map((item) => (
-            <tr key={item.id}>
-              <td>
-                <strong>{item.name}</strong>
-              </td>
-              <td>{item.category}</td>
-              <td>{money.format(item.value)}</td>
-              <td>{money.format(item.value / 650)}</td>
-              <td>
-                <RowActions
-                  onEdit={() => onEdit(item)}
-                  onDelete={() => onDelete(item.id)}
-                />
-              </td>
-            </tr>
-          ))}
+          {items.map((item) => {
+            const isMonthly = item.type === 'monthly' || (!item.type && !item.date);
+            return (
+              <tr key={item.id}>
+                <td>
+                  <strong>{item.name}</strong>
+                  {item.notes && (
+                    <small className="table-subtitle">{item.notes}</small>
+                  )}
+                </td>
+                <td>
+                  <span
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '0.25rem',
+                      padding: '0.2rem 0.55rem',
+                      borderRadius: '9999px',
+                      fontSize: '0.75rem',
+                      fontWeight: 600,
+                      background: isMonthly ? 'rgba(59, 130, 246, 0.15)' : 'rgba(245, 158, 11, 0.15)',
+                      color: isMonthly ? '#60a5fa' : '#fbbf24',
+                      border: isMonthly ? '1px solid rgba(59, 130, 246, 0.3)' : '1px solid rgba(245, 158, 11, 0.3)',
+                    }}
+                  >
+                    {isMonthly ? '🗓️ Mensal' : '⚡ Pontual'}
+                  </span>
+                </td>
+                <td>{item.category}</td>
+                <td>
+                  {isMonthly ? (
+                    <span>{item.dueDay || 'Dia 10'}</span>
+                  ) : (
+                    <span>
+                      {item.date
+                        ? new Date(`${item.date}T12:00:00`).toLocaleDateString('pt-BR')
+                        : '—'}
+                    </span>
+                  )}
+                </td>
+                <td>
+                  <span>{item.paymentMethod || 'PIX'}</span>
+                </td>
+                <td>
+                  <strong style={{ color: '#f87171' }}>-{money.format(item.value)}</strong>
+                </td>
+                <td>
+                  <RowActions
+                    onEdit={() => onEdit(item)}
+                    onDelete={() => onDelete(item.id)}
+                  />
+                </td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </div>
@@ -3488,113 +3730,765 @@ function Result({
 }
 
 function ReportsView() {
-  const products = useRecords<Product>('product');
   const sales = useRecords<Sale>('sale');
-  const reports = [
-    {
-      title: 'Vendas e resultado',
-      detail: 'Faturamento, custos e lucro realizado',
-      icon: ShoppingCart,
-    },
-    {
-      title: 'Fichas técnicas',
-      detail: 'Ingredientes, rendimento e custo por porção',
-      icon: FlaskConical,
-    },
-    {
-      title: 'Custos por produto',
-      detail: 'Composição completa do custo unitário',
-      icon: Calculator,
-    },
-    {
-      title: 'Margens e lucratividade',
-      detail: 'Preço, contribuição e lucro por item',
-      icon: TrendingUp,
-    },
-  ];
-  function csv() {
+  const expenses = useRecords<Expense>('expense');
+  const ingredients = useRecords<Ingredient>('ingredient');
+  const packaging = useRecords<Packaging>('packaging');
+  const products = useRecords<Product>('product');
+
+  const [period, setPeriod] = useState<'all' | 'today' | 'this_week' | 'this_month' | 'last_month' | 'custom'>('this_month');
+  const [customStart, setCustomStart] = useState('');
+  const [customEnd, setCustomEnd] = useState('');
+  const [ledgerSearch, setLedgerSearch] = useState('');
+  const [ledgerTab, setLedgerTab] = useState<'all' | 'sales' | 'one_off_expenses' | 'monthly_expenses' | 'supplies'>('all');
+
+  function isDateInPeriod(dateStr?: string) {
+    if (period === 'all') return true;
+    if (!dateStr) return period === 'this_month' || period === 'all';
+    const d = new Date(`${dateStr.slice(0, 10)}T12:00:00`);
+    const now = new Date();
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+
+    if (period === 'today') {
+      const todayEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59);
+      return d >= todayStart && d <= todayEnd;
+    }
+    if (period === 'this_week') {
+      const day = now.getDay();
+      const diff = now.getDate() - day + (day === 0 ? -6 : 1);
+      const monday = new Date(now.getFullYear(), now.getMonth(), diff, 0, 0, 0);
+      return d >= monday;
+    }
+    if (period === 'this_month') {
+      const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+      return d >= startOfMonth;
+    }
+    if (period === 'last_month') {
+      const startOfLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+      const endOfLastMonth = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59);
+      return d >= startOfLastMonth && d <= endOfLastMonth;
+    }
+    if (period === 'custom') {
+      if (customStart && d < new Date(`${customStart}T00:00:00`)) return false;
+      if (customEnd && d > new Date(`${customEnd}T23:59:59`)) return false;
+      return true;
+    }
+    return true;
+  }
+
+  // Filtered datasets based on period
+  const periodSales = sales.items.filter((s) => isDateInPeriod(s.date));
+  const periodOneOffExpenses = expenses.items.filter(
+    (e) => (e.type === 'one_off' || (!e.type && e.date)) && isDateInPeriod(e.date),
+  );
+  const periodMonthlyExpenses = expenses.items.filter(
+    (e) => e.type === 'monthly' || (!e.type && !e.date),
+  );
+
+  // Financial calculations
+  const grossRevenue = periodSales.reduce(
+    (sum, s) => sum + (s.gross || s.unitPrice * s.quantity || 0),
+    0,
+  );
+  const discounts = periodSales.reduce((sum, s) => sum + (s.discount || 0), 0);
+  const feesAndDelivery = periodSales.reduce(
+    (sum, s) => sum + (s.fee || 0) + (s.deliveryCost || 0),
+    0,
+  );
+  const netRevenue = periodSales.reduce(
+    (sum, s) =>
+      sum +
+      (s.netRevenue ||
+        (s.gross || s.unitPrice * s.quantity || 0) -
+          (s.discount || 0) -
+          (s.fee || 0) -
+          (s.deliveryCost || 0)),
+    0,
+  );
+  const totalCpv = periodSales.reduce((sum, s) => sum + (s.cost || 0), 0);
+  const grossProfit = netRevenue - totalCpv;
+  const grossMarginPercent = netRevenue > 0 ? (grossProfit / netRevenue) * 100 : 0;
+
+  const totalOneOffExpenses = periodOneOffExpenses.reduce((sum, e) => sum + e.value, 0);
+  const totalMonthlyExpenses = periodMonthlyExpenses.reduce((sum, e) => sum + e.value, 0);
+  const totalOperatingExpenses = totalOneOffExpenses + totalMonthlyExpenses;
+
+  const netResult = grossProfit - totalOperatingExpenses;
+  const isProfit = netResult >= 0;
+  const netMarginPercent = netRevenue > 0 ? (netResult / netRevenue) * 100 : (isProfit ? 0 : -100);
+
+  // Consolidated Ledger (Everything that was launched)
+  type LedgerEntry = {
+    id: string;
+    kind: 'sale' | 'one_off_expense' | 'monthly_expense' | 'ingredient' | 'packaging';
+    date: string;
+    title: string;
+    category: string;
+    typeBadge: string;
+    typeColor: string;
+    amount: number;
+    isIncome: boolean;
+    detail: string;
+    paymentOrSupplier: string;
+  };
+
+  const allLedgerEntries: LedgerEntry[] = [
+    ...sales.items.map((s) => ({
+      id: `sale-${s.id}`,
+      kind: 'sale' as const,
+      date: s.date || '—',
+      title: s.productName || s.name || 'Venda de produto',
+      category: s.channel || 'Venda',
+      typeBadge: '🛒 Venda',
+      typeColor: '#10b981',
+      amount: s.netRevenue || s.gross || 0,
+      isIncome: true,
+      detail: `${s.quantity} un. · Lucro: ${money.format(s.profit || 0)}`,
+      paymentOrSupplier: `${s.payment || 'PIX'}${s.customer ? ` (${s.customer})` : ''}`,
+    })),
+    ...expenses.items
+      .filter((e) => e.type === 'one_off' || (!e.type && e.date))
+      .map((e) => ({
+        id: `exp-one-${e.id}`,
+        kind: 'one_off_expense' as const,
+        date: e.date || '—',
+        title: e.name,
+        category: e.category || 'Operacional',
+        typeBadge: '⚡ Despesa Pontual',
+        typeColor: '#fbbf24',
+        amount: e.value,
+        isIncome: false,
+        detail: e.notes || 'Gasto avulso',
+        paymentOrSupplier: e.paymentMethod || 'PIX',
+      })),
+    ...expenses.items
+      .filter((e) => e.type === 'monthly' || (!e.type && !e.date))
+      .map((e) => ({
+        id: `exp-mon-${e.id}`,
+        kind: 'monthly_expense' as const,
+        date: e.dueDay || 'Mensal',
+        title: e.name,
+        category: e.category || 'Estrutura',
+        typeBadge: '🗓️ Despesa Fixa',
+        typeColor: '#60a5fa',
+        amount: e.value,
+        isIncome: false,
+        detail: e.notes || 'Custo fixo recorrente',
+        paymentOrSupplier: e.paymentMethod || 'Recorrente',
+      })),
+    ...ingredients.items.map((ing) => ({
+      id: `ing-${ing.id}`,
+      kind: 'ingredient' as const,
+      date: ing.date || '—',
+      title: ing.name,
+      category: ing.category || 'Ingrediente',
+      typeBadge: '📦 Insumo',
+      typeColor: '#a78bfa',
+      amount: ing.price,
+      isIncome: false,
+      detail: `Pacote com ${ing.qty} ${ing.unit} (Estoque: ${ing.stock})`,
+      paymentOrSupplier: ing.supplier || 'Fornecedor',
+    })),
+    ...packaging.items.map((pkg) => ({
+      id: `pkg-${pkg.id}`,
+      kind: 'packaging' as const,
+      date: '—',
+      title: pkg.name,
+      category: pkg.type || 'Embalagem',
+      typeBadge: '🎁 Embalagem',
+      typeColor: '#ec4899',
+      amount: pkg.price,
+      isIncome: false,
+      detail: `Pacote com ${pkg.pack} un. (${money.format(pkg.pack ? pkg.price / pkg.pack : 0)}/un.)`,
+      paymentOrSupplier: 'Embalagens',
+    })),
+  ].sort((a, b) => {
+    if (a.date === '—') return 1;
+    if (b.date === '—') return -1;
+    return b.date.localeCompare(a.date);
+  });
+
+  const filteredLedger = allLedgerEntries.filter((entry) => {
+    if (ledgerTab === 'sales' && entry.kind !== 'sale') return false;
+    if (ledgerTab === 'one_off_expenses' && entry.kind !== 'one_off_expense') return false;
+    if (ledgerTab === 'monthly_expenses' && entry.kind !== 'monthly_expense') return false;
+    if (ledgerTab === 'supplies' && entry.kind !== 'ingredient' && entry.kind !== 'packaging') return false;
+
+    if (ledgerSearch.trim()) {
+      const q = ledgerSearch.toLowerCase();
+      return (
+        entry.title.toLowerCase().includes(q) ||
+        entry.category.toLowerCase().includes(q) ||
+        entry.detail.toLowerCase().includes(q) ||
+        entry.paymentOrSupplier.toLowerCase().includes(q)
+      );
+    }
+    return true;
+  });
+
+  function exportDreCsv() {
     const rows = [
-      ['Produto', 'Custo', 'Preço', 'Margem', 'Lucro'],
-      ...products.items.map((item) => [
-        item.name,
-        item.cost,
-        item.price,
-        item.margin,
-        item.profit,
-      ]),
+      ['DEMONSTRATIVO DE RESULTADO DO EXERCÍCIO (DRE) - CONFEITARIA'],
+      ['Período', period],
+      [''],
+      ['Linha', 'Valor (R$)', '% Receita'],
+      ['(+) Receita Bruta de Vendas', grossRevenue.toFixed(2), (netRevenue > 0 ? (grossRevenue / netRevenue) * 100 : 0).toFixed(1) + '%'],
+      ['(-) Descontos Concedidos', (-discounts).toFixed(2), (netRevenue > 0 ? (discounts / netRevenue) * 100 : 0).toFixed(1) + '%'],
+      ['(-) Taxas & Entrega', (-feesAndDelivery).toFixed(2), (netRevenue > 0 ? (feesAndDelivery / netRevenue) * 100 : 0).toFixed(1) + '%'],
+      ['(=) RECEITA OPERACIONAL LÍQUIDA', netRevenue.toFixed(2), '100,0%'],
+      ['(-) Custo dos Produtos Vendidos (CPV)', (-totalCpv).toFixed(2), (netRevenue > 0 ? (totalCpv / netRevenue) * 100 : 0).toFixed(1) + '%'],
+      ['(=) LUCRO BRUTO', grossProfit.toFixed(2), grossMarginPercent.toFixed(1) + '%'],
+      ['(-) Despesas Operacionais / Pontuais', (-totalOneOffExpenses).toFixed(2), (netRevenue > 0 ? (totalOneOffExpenses / netRevenue) * 100 : 0).toFixed(1) + '%'],
+      ['(-) Despesas Fixas / Estruturais', (-totalMonthlyExpenses).toFixed(2), (netRevenue > 0 ? (totalMonthlyExpenses / netRevenue) * 100 : 0).toFixed(1) + '%'],
+      ['(=) RESULTADO FINAL', netResult.toFixed(2), netMarginPercent.toFixed(1) + '%'],
+      ['STATUS', isProfit ? 'LUCRO LÍQUIDO' : 'PREJUÍZO', ''],
     ];
-    const blob = new Blob(
-      [`\uFEFF${rows.map((row) => row.join(';')).join('\n')}`],
-      { type: 'text/csv;charset=utf-8' },
-    );
+
+    const blob = new Blob([`\uFEFF${rows.map((r) => r.join(';')).join('\n')}`], {
+      type: 'text/csv;charset=utf-8',
+    });
     const url = URL.createObjectURL(blob);
-    const anchor = document.createElement('a');
-    anchor.href = url;
-    anchor.download = 'doce-margem-relatorio.csv';
-    anchor.click();
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `dre-financeiro-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
     URL.revokeObjectURL(url);
   }
+
+  function exportLedgerCsv() {
+    const rows = [
+      ['Data', 'Tipo', 'Descrição', 'Categoria', 'Detalhes', 'Pagamento / Fornecedor', 'Valor (R$)'],
+      ...filteredLedger.map((e) => [
+        e.date,
+        e.typeBadge,
+        e.title,
+        e.category,
+        e.detail,
+        e.paymentOrSupplier,
+        e.isIncome ? e.amount.toFixed(2) : (-e.amount).toFixed(2),
+      ]),
+    ];
+
+    const blob = new Blob([`\uFEFF${rows.map((r) => r.join(';')).join('\n')}`], {
+      type: 'text/csv;charset=utf-8',
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `extrato-geral-lancamentos-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
   return (
     <>
       <ModuleHeading
-        eyebrow="ANÁLISE"
-        title="Relatórios"
-        subtitle="Acompanhe produtos e vendas com dados reais da sua conta."
+        eyebrow="ANÁLISE & RESULTADOS"
+        title="Relatórios & Lucro / Prejuízo"
+        subtitle="Extrato consolidado de tudo o que foi lançado, DRE completo e apuração de lucro real."
         action={
-          <Button
-            onClick={() => exportSalesCsv(sales.items)}
-            className="primary-action"
-          >
-            <Download size={16} /> Exportar vendas
-          </Button>
+          <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+            <Button onClick={exportDreCsv} variant="outline" className="button-secondary">
+              <Download size={15} /> Exportar DRE
+            </Button>
+            <Button onClick={exportLedgerCsv} variant="outline" className="button-secondary">
+              <ReceiptText size={15} /> Exportar Extrato
+            </Button>
+            <Button onClick={() => window.print()} className="primary-action">
+              <Printer size={15} /> Imprimir / PDF
+            </Button>
+          </div>
         }
       />
-      <section className="report-grid">
-        {reports.map(({ title, detail, icon: Icon }) => (
-          <article className="panel report-card" key={title}>
-            <span>
-              <Icon size={21} />
+
+      {/* Period Selector Tabs */}
+      <div className="panel" style={{ padding: '0.9rem 1.25rem', marginBottom: '1.5rem', display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: '1rem' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+          <Calendar size={17} style={{ color: 'var(--primary)' }} />
+          <span style={{ fontWeight: 600, fontSize: '0.9rem', marginRight: '0.25rem' }}>Período de Análise:</span>
+          <button
+            type="button"
+            className={`tag-button ${period === 'this_month' ? 'active' : ''}`}
+            onClick={() => setPeriod('this_month')}
+          >
+            Este mês
+          </button>
+          <button
+            type="button"
+            className={`tag-button ${period === 'this_week' ? 'active' : ''}`}
+            onClick={() => setPeriod('this_week')}
+          >
+            Esta semana
+          </button>
+          <button
+            type="button"
+            className={`tag-button ${period === 'today' ? 'active' : ''}`}
+            onClick={() => setPeriod('today')}
+          >
+            Hoje
+          </button>
+          <button
+            type="button"
+            className={`tag-button ${period === 'last_month' ? 'active' : ''}`}
+            onClick={() => setPeriod('last_month')}
+          >
+            Mês anterior
+          </button>
+          <button
+            type="button"
+            className={`tag-button ${period === 'all' ? 'active' : ''}`}
+            onClick={() => setPeriod('all')}
+          >
+            Todo o período
+          </button>
+          <button
+            type="button"
+            className={`tag-button ${period === 'custom' ? 'active' : ''}`}
+            onClick={() => setPeriod('custom')}
+          >
+            Personalizado
+          </button>
+        </div>
+
+        {period === 'custom' && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+            <input
+              type="date"
+              value={customStart}
+              onChange={(e) => setCustomStart(e.target.value)}
+              style={{ padding: '0.35rem 0.6rem', borderRadius: '0.4rem', border: '1px solid var(--border)', background: 'var(--input)', color: 'var(--foreground)', fontSize: '0.85rem' }}
+            />
+            <span style={{ color: 'var(--muted-foreground)' }}>até</span>
+            <input
+              type="date"
+              value={customEnd}
+              onChange={(e) => setCustomEnd(e.target.value)}
+              style={{ padding: '0.35rem 0.6rem', borderRadius: '0.4rem', border: '1px solid var(--border)', background: 'var(--input)', color: 'var(--foreground)', fontSize: '0.85rem' }}
+            />
+          </div>
+        )}
+      </div>
+
+      {/* HERO RESULT CARD: LUCRO OU PREJUÍZO */}
+      <section
+        className="panel"
+        style={{
+          padding: '1.75rem',
+          marginBottom: '1.75rem',
+          background: isProfit
+            ? 'linear-gradient(135deg, rgba(16, 185, 129, 0.14) 0%, rgba(5, 150, 105, 0.05) 100%)'
+            : 'linear-gradient(135deg, rgba(239, 68, 68, 0.15) 0%, rgba(220, 38, 38, 0.05) 100%)',
+          border: isProfit ? '1px solid rgba(16, 185, 129, 0.35)' : '1px solid rgba(239, 68, 68, 0.35)',
+          borderRadius: '1rem',
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))',
+          gap: '1.5rem',
+          alignItems: 'center',
+        }}
+      >
+        <div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', marginBottom: '0.5rem' }}>
+            <span
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '0.35rem',
+                padding: '0.3rem 0.75rem',
+                borderRadius: '9999px',
+                fontSize: '0.85rem',
+                fontWeight: 700,
+                letterSpacing: '0.05em',
+                background: isProfit ? '#10b981' : '#ef4444',
+                color: '#ffffff',
+              }}
+            >
+              {isProfit ? <TrendingUp size={16} /> : <TrendingDown size={16} />}
+              {isProfit ? 'OPERAÇÃO COM LUCRO' : 'OPERAÇÃO EM PREJUÍZO'}
             </span>
-            <div>
-              <h2>{title}</h2>
-              <p>{detail}</p>
+            <span
+              style={{
+                fontSize: '0.85rem',
+                fontWeight: 600,
+                color: isProfit ? '#34d399' : '#f87171',
+                padding: '0.25rem 0.6rem',
+                borderRadius: '0.4rem',
+                background: isProfit ? 'rgba(16, 185, 129, 0.15)' : 'rgba(239, 68, 68, 0.15)',
+              }}
+            >
+              Margem Líquida: {netMarginPercent.toFixed(1).replace('.', ',')}%
+            </span>
+          </div>
+
+          <p className="section-kicker" style={{ color: 'var(--muted-foreground)', marginBottom: '0.2rem' }}>
+            RESULTADO LÍQUIDO FINAL DO PERÍODO
+          </p>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.75rem' }}>
+            <h1
+              style={{
+                fontSize: '2.5rem',
+                fontWeight: 800,
+                margin: 0,
+                color: isProfit ? '#34d399' : '#f87171',
+                letterSpacing: '-0.03em',
+              }}
+            >
+              {isProfit ? `+${money.format(netResult)}` : money.format(netResult)}
+            </h1>
+          </div>
+          <p style={{ margin: '0.5rem 0 0', color: 'var(--muted-foreground)', fontSize: '0.9rem' }}>
+            {isProfit
+              ? '🎉 Parabéns! Suas vendas superaram os custos dos produtos e todas as despesas operacionais e fixas.'
+              : '⚠️ Atenção: Os custos com insumos e despesas operacionais/fixas foram maiores que as receitas no período.'}
+          </p>
+        </div>
+
+        {/* Mini formula breakdown */}
+        <div
+          style={{
+            background: 'var(--card)',
+            padding: '1.25rem',
+            borderRadius: '0.75rem',
+            border: '1px solid var(--border)',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '0.6rem',
+          }}
+        >
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem' }}>
+            <span style={{ color: 'var(--muted-foreground)' }}>(+) Receita Líquida</span>
+            <strong style={{ color: '#10b981' }}>{money.format(netRevenue)}</strong>
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem' }}>
+            <span style={{ color: 'var(--muted-foreground)' }}>(-) Custo Insumos (CPV)</span>
+            <strong style={{ color: '#f87171' }}>-{money.format(totalCpv)}</strong>
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem' }}>
+            <span style={{ color: 'var(--muted-foreground)' }}>(-) Despesas Pontuais (Normais)</span>
+            <strong style={{ color: '#fbbf24' }}>-{money.format(totalOneOffExpenses)}</strong>
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem' }}>
+            <span style={{ color: 'var(--muted-foreground)' }}>(-) Despesas Fixas (Mensais)</span>
+            <strong style={{ color: '#60a5fa' }}>-{money.format(totalMonthlyExpenses)}</strong>
+          </div>
+          <div style={{ height: '1px', background: 'var(--border)', margin: '0.2rem 0' }} />
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.95rem', fontWeight: 700 }}>
+            <span>(=) Lucro / Prejuízo Real</span>
+            <span style={{ color: isProfit ? '#34d399' : '#f87171' }}>
+              {isProfit ? `+${money.format(netResult)}` : money.format(netResult)}
+            </span>
+          </div>
+        </div>
+      </section>
+
+      {/* KPI STRIP */}
+      <div
+        className="summary-strip"
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
+          gap: '1rem',
+          marginBottom: '1.75rem',
+        }}
+      >
+        <div className="panel" style={{ padding: '1.15rem' }}>
+          <p className="section-kicker" style={{ fontSize: '0.72rem', color: 'var(--muted-foreground)', marginBottom: '0.25rem' }}>FATURAMENTO BRUTO</p>
+          <strong style={{ fontSize: '1.35rem', color: 'var(--foreground)' }}>{money.format(grossRevenue)}</strong>
+          <p style={{ fontSize: '0.78rem', color: 'var(--muted-foreground)', marginTop: '0.2rem' }}>{periodSales.length} vendas no período</p>
+        </div>
+        <div className="panel" style={{ padding: '1.15rem' }}>
+          <p className="section-kicker" style={{ fontSize: '0.72rem', color: 'var(--muted-foreground)', marginBottom: '0.25rem' }}>CUSTO INSUMOS (CPV)</p>
+          <strong style={{ fontSize: '1.35rem', color: '#f87171' }}>{money.format(totalCpv)}</strong>
+          <p style={{ fontSize: '0.78rem', color: 'var(--muted-foreground)', marginTop: '0.2rem' }}>Ingredientes e embalagens vendidas</p>
+        </div>
+        <div className="panel" style={{ padding: '1.15rem' }}>
+          <p className="section-kicker" style={{ fontSize: '0.72rem', color: 'var(--muted-foreground)', marginBottom: '0.25rem' }}>DESPESAS PONTUAIS</p>
+          <strong style={{ fontSize: '1.35rem', color: '#fbbf24' }}>{money.format(totalOneOffExpenses)}</strong>
+          <p style={{ fontSize: '0.78rem', color: 'var(--muted-foreground)', marginTop: '0.2rem' }}>Gastos normais e operacionais</p>
+        </div>
+        <div className="panel" style={{ padding: '1.15rem' }}>
+          <p className="section-kicker" style={{ fontSize: '0.72rem', color: 'var(--muted-foreground)', marginBottom: '0.25rem' }}>DESPESAS FIXAS</p>
+          <strong style={{ fontSize: '1.35rem', color: '#60a5fa' }}>{money.format(totalMonthlyExpenses)}</strong>
+          <p style={{ fontSize: '0.78rem', color: 'var(--muted-foreground)', marginTop: '0.2rem' }}>Custos de estrutura mensal</p>
+        </div>
+        <div className="panel" style={{ padding: '1.15rem', background: isProfit ? 'rgba(16, 185, 129, 0.1)' : 'rgba(239, 68, 68, 0.1)', border: isProfit ? '1px solid rgba(16, 185, 129, 0.3)' : '1px solid rgba(239, 68, 68, 0.3)' }}>
+          <p className="section-kicker" style={{ fontSize: '0.72rem', color: isProfit ? '#34d399' : '#f87171', marginBottom: '0.25rem' }}>LUCRO LÍQUIDO</p>
+          <strong style={{ fontSize: '1.35rem', color: isProfit ? '#34d399' : '#f87171' }}>
+            {isProfit ? `+${money.format(netResult)}` : money.format(netResult)}
+          </strong>
+          <p style={{ fontSize: '0.78rem', color: 'var(--muted-foreground)', marginTop: '0.2rem' }}>Margem Líquida: {netMarginPercent.toFixed(1)}%</p>
+        </div>
+      </div>
+
+      {/* DRE FINANCEIRO COMPLETO */}
+      <section className="panel" style={{ padding: '1.5rem', marginBottom: '1.75rem' }}>
+        <div className="panel-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+          <DataHeader title="Demonstrativo de Resultado do Exercício (DRE)" />
+          <Button onClick={exportDreCsv} variant="outline" className="button-secondary">
+            <Download size={14} /> CSV DRE
+          </Button>
+        </div>
+
+        <div className="product-table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Estrutura da DRE</th>
+                <th style={{ textAlign: 'right' }}>Valor no Período</th>
+                <th style={{ textAlign: 'right' }}>% da Receita</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>
+                  <strong>(+) Receita Bruta de Vendas</strong>
+                  <small className="table-subtitle">Total transacionado pelo cardápio e balcão</small>
+                </td>
+                <td style={{ textAlign: 'right', fontWeight: 600 }}>{money.format(grossRevenue)}</td>
+                <td style={{ textAlign: 'right', color: 'var(--muted-foreground)' }}>
+                  {netRevenue > 0 ? ((grossRevenue / netRevenue) * 100).toFixed(1).replace('.', ',') : '0,0'}%
+                </td>
+              </tr>
+              <tr>
+                <td style={{ paddingLeft: '2rem' }}>
+                  <span>(-) Descontos Concedidos</span>
+                </td>
+                <td style={{ textAlign: 'right', color: '#f87171' }}>-{money.format(discounts)}</td>
+                <td style={{ textAlign: 'right', color: 'var(--muted-foreground)' }}>
+                  {netRevenue > 0 ? ((discounts / netRevenue) * 100).toFixed(1).replace('.', ',') : '0,0'}%
+                </td>
+              </tr>
+              <tr>
+                <td style={{ paddingLeft: '2rem' }}>
+                  <span>(-) Taxas de Cartão, Marketplace & Entrega</span>
+                </td>
+                <td style={{ textAlign: 'right', color: '#f87171' }}>-{money.format(feesAndDelivery)}</td>
+                <td style={{ textAlign: 'right', color: 'var(--muted-foreground)' }}>
+                  {netRevenue > 0 ? ((feesAndDelivery / netRevenue) * 100).toFixed(1).replace('.', ',') : '0,0'}%
+                </td>
+              </tr>
+              <tr style={{ background: 'rgba(255, 255, 255, 0.03)', fontWeight: 700 }}>
+                <td>
+                  <strong>(=) RECEITA OPERACIONAL LÍQUIDA</strong>
+                </td>
+                <td style={{ textAlign: 'right', color: 'var(--foreground)' }}>{money.format(netRevenue)}</td>
+                <td style={{ textAlign: 'right' }}>100,0%</td>
+              </tr>
+              <tr>
+                <td style={{ paddingLeft: '2rem' }}>
+                  <span>(-) Custo dos Produtos Vendidos (CPV - Insumos & Embalagens)</span>
+                </td>
+                <td style={{ textAlign: 'right', color: '#f87171' }}>-{money.format(totalCpv)}</td>
+                <td style={{ textAlign: 'right', color: 'var(--muted-foreground)' }}>
+                  {netRevenue > 0 ? ((totalCpv / netRevenue) * 100).toFixed(1).replace('.', ',') : '0,0'}%
+                </td>
+              </tr>
+              <tr style={{ background: 'rgba(255, 255, 255, 0.03)', fontWeight: 700 }}>
+                <td>
+                  <strong>(=) LUCRO BRUTO OPERACIONAL</strong>
+                </td>
+                <td style={{ textAlign: 'right', color: grossProfit >= 0 ? '#10b981' : '#f87171' }}>
+                  {money.format(grossProfit)}
+                </td>
+                <td style={{ textAlign: 'right', color: grossProfit >= 0 ? '#10b981' : '#f87171' }}>
+                  {grossMarginPercent.toFixed(1).replace('.', ',')}%
+                </td>
+              </tr>
+              <tr>
+                <td style={{ paddingLeft: '2rem' }}>
+                  <span>(-) Despesas Normais / Pontuais (Gás, manutenções, avulsas)</span>
+                </td>
+                <td style={{ textAlign: 'right', color: '#fbbf24' }}>-{money.format(totalOneOffExpenses)}</td>
+                <td style={{ textAlign: 'right', color: 'var(--muted-foreground)' }}>
+                  {netRevenue > 0 ? ((totalOneOffExpenses / netRevenue) * 100).toFixed(1).replace('.', ',') : '0,0'}%
+                </td>
+              </tr>
+              <tr>
+                <td style={{ paddingLeft: '2rem' }}>
+                  <span>(-) Despesas Fixas / Mensais (Aluguel, luz, MEI, estrutura)</span>
+                </td>
+                <td style={{ textAlign: 'right', color: '#60a5fa' }}>-{money.format(totalMonthlyExpenses)}</td>
+                <td style={{ textAlign: 'right', color: 'var(--muted-foreground)' }}>
+                  {netRevenue > 0 ? ((totalMonthlyExpenses / netRevenue) * 100).toFixed(1).replace('.', ',') : '0,0'}%
+                </td>
+              </tr>
+              <tr
+                style={{
+                  background: isProfit ? 'rgba(16, 185, 129, 0.12)' : 'rgba(239, 68, 68, 0.12)',
+                  fontSize: '1.05rem',
+                  fontWeight: 800,
+                  borderTop: '2px solid var(--border)',
+                }}
+              >
+                <td>
+                  <strong style={{ color: isProfit ? '#34d399' : '#f87171' }}>
+                    (=) RESULTADO FINAL: {isProfit ? 'LUCRO LÍQUIDO' : 'PREJUÍZO'}
+                  </strong>
+                </td>
+                <td style={{ textAlign: 'right', color: isProfit ? '#34d399' : '#f87171' }}>
+                  {isProfit ? `+${money.format(netResult)}` : money.format(netResult)}
+                </td>
+                <td style={{ textAlign: 'right', color: isProfit ? '#34d399' : '#f87171' }}>
+                  {netMarginPercent.toFixed(1).replace('.', ',')}%
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      {/* EXTRATO GERAL CONSOLIDADO: TUDO QUE FOI LANÇADO */}
+      <section className="panel" style={{ padding: '1.5rem', marginBottom: '1.75rem' }}>
+        <div className="panel-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem', marginBottom: '1.25rem' }}>
+          <div>
+            <DataHeader title="Extrato Geral Consolidado (Tudo o que foi lançado)" />
+            <p style={{ fontSize: '0.85rem', color: 'var(--muted-foreground)', marginTop: '0.2rem' }}>
+              Histórico unificado de todas as vendas, despesas pontuais, fixas e insumos cadastrados.
+            </p>
+          </div>
+          <span className="rate-badge">
+            {filteredLedger.length} registros encontrados
+          </span>
+        </div>
+
+        {/* Filter controls */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', marginBottom: '1.25rem' }}>
+          <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', alignItems: 'center' }}>
+            <div style={{ position: 'relative', flex: '1 1 250px' }}>
+              <Search size={16} style={{ position: 'absolute', left: '0.75rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--muted-foreground)' }} />
+              <input
+                type="text"
+                value={ledgerSearch}
+                onChange={(e) => setLedgerSearch(e.target.value)}
+                placeholder="Buscar por nome, cliente, categoria ou fornecedor..."
+                style={{
+                  width: '100%',
+                  padding: '0.55rem 0.75rem 0.55rem 2.25rem',
+                  borderRadius: '0.5rem',
+                  border: '1px solid var(--border)',
+                  background: 'var(--input)',
+                  color: 'var(--foreground)',
+                  fontSize: '0.85rem',
+                }}
+              />
             </div>
-            <div className="report-actions">
-              <button onClick={() => window.print()}>
-                <FileText size={15} /> Salvar PDF
+
+            <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap' }}>
+              <button
+                type="button"
+                className={`tag-button ${ledgerTab === 'all' ? 'active' : ''}`}
+                onClick={() => setLedgerTab('all')}
+              >
+                Todos ({allLedgerEntries.length})
               </button>
               <button
-                onClick={
-                  title === 'Vendas e resultado'
-                    ? () => exportSalesCsv(sales.items)
-                    : csv
-                }
+                type="button"
+                className={`tag-button ${ledgerTab === 'sales' ? 'active' : ''}`}
+                onClick={() => setLedgerTab('sales')}
               >
-                <Download size={15} /> CSV
+                🛒 Vendas ({sales.items.length})
+              </button>
+              <button
+                type="button"
+                className={`tag-button ${ledgerTab === 'one_off_expenses' ? 'active' : ''}`}
+                onClick={() => setLedgerTab('one_off_expenses')}
+              >
+                ⚡ Despesas Pontuais ({expenses.items.filter((e) => e.type === 'one_off' || (!e.type && e.date)).length})
+              </button>
+              <button
+                type="button"
+                className={`tag-button ${ledgerTab === 'monthly_expenses' ? 'active' : ''}`}
+                onClick={() => setLedgerTab('monthly_expenses')}
+              >
+                🗓️ Despesas Fixas ({expenses.items.filter((e) => e.type === 'monthly' || (!e.type && !e.date)).length})
+              </button>
+              <button
+                type="button"
+                className={`tag-button ${ledgerTab === 'supplies' ? 'active' : ''}`}
+                onClick={() => setLedgerTab('supplies')}
+              >
+                📦 Insumos & Embalagens ({ingredients.items.length + packaging.items.length})
               </button>
             </div>
-          </article>
-        ))}
-      </section>
-      <section className="panel report-preview">
-        <div className="panel-header">
-          <DataHeader title="Histórico de vendas" />
-          <span className="rate-badge">{sales.items.length} lançamentos</span>
+          </div>
         </div>
-        {sales.items.length ? (
-          <SalesTable items={sales.items} readOnly />
+
+        {filteredLedger.length ? (
+          <div className="product-table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Data / Prazo</th>
+                  <th>Tipo</th>
+                  <th>Lançamento</th>
+                  <th>Categoria / Detalhes</th>
+                  <th>Forma / Fornecedor</th>
+                  <th style={{ textAlign: 'right' }}>Valor</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredLedger.map((entry) => (
+                  <tr key={entry.id}>
+                    <td>
+                      <small style={{ fontWeight: 600 }}>
+                        {entry.date && entry.date !== '—' && !entry.date.startsWith('Dia')
+                          ? new Date(`${entry.date}T12:00:00`).toLocaleDateString('pt-BR')
+                          : entry.date}
+                      </small>
+                    </td>
+                    <td>
+                      <span
+                        style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '0.25rem',
+                          padding: '0.2rem 0.55rem',
+                          borderRadius: '9999px',
+                          fontSize: '0.72rem',
+                          fontWeight: 600,
+                          background: `${entry.typeColor}22`,
+                          color: entry.typeColor,
+                          border: `1px solid ${entry.typeColor}44`,
+                        }}
+                      >
+                        {entry.typeBadge}
+                      </span>
+                    </td>
+                    <td>
+                      <strong>{entry.title}</strong>
+                      {entry.detail && (
+                        <small className="table-subtitle">{entry.detail}</small>
+                      )}
+                    </td>
+                    <td>
+                      <span>{entry.category}</span>
+                    </td>
+                    <td>
+                      <span>{entry.paymentOrSupplier}</span>
+                    </td>
+                    <td style={{ textAlign: 'right' }}>
+                      <strong style={{ color: entry.isIncome ? '#10b981' : '#f87171', fontSize: '0.95rem' }}>
+                        {entry.isIncome ? `+${money.format(entry.amount)}` : `-${money.format(entry.amount)}`}
+                      </strong>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         ) : (
           <EmptyState
-            icon={<ShoppingCart />}
-            title="Sem vendas para o relatório"
-            text="Lance vendas para acompanhar o resultado realizado."
+            icon={<ReceiptText />}
+            title="Nenhum lançamento encontrado"
+            text="Não há registros correspondentes aos filtros selecionados."
           />
         )}
       </section>
+
+      {/* Portfolio Profitability table */}
       <section className="panel report-preview">
         <div className="panel-header">
-          <DataHeader title="Lucratividade do portfólio" />
-          <span className="rate-badge">Dados reais</span>
+          <DataHeader title="Lucratividade por Produto Cadastrado" />
+          <span className="rate-badge">{products.items.length} produtos</span>
         </div>
         {products.items.length ? (
           <ProductTable items={products.items} readOnly />
@@ -3602,7 +4496,7 @@ function ReportsView() {
           <EmptyState
             icon={<FileText />}
             title="Sem produtos para o relatório"
-            text="Cadastre produtos para gerar sua análise."
+            text="Cadastre produtos para gerar sua análise de rentabilidade."
           />
         )}
       </section>
