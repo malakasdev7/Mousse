@@ -54,3 +54,20 @@ test('acesso sem sessão permanece no login', async ({ page }) => {
   await page.goto('http://localhost:3000');
   await expect(page.getByRole('heading', { name: 'Entre na sua conta.' })).toBeVisible();
 });
+
+test('permite informar e atualizar o dinheiro em caixa', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.route('**/api/me', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ id: '1', username: 'teste', name: 'Teste', role: 'admin', storeId: '1', companyName: 'Mousse Mania' }) }));
+  await page.route('**/api/records', async route => {
+    if (route.request().method() === 'GET') return route.fulfill({ status: 200, contentType: 'application/json', body: '[]' });
+    const request = route.request().postDataJSON();
+    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ id: 10, kind: 'settings', payload: request.payload }) });
+  });
+  await page.goto('http://localhost:3000');
+  await page.getByRole('button', { name: 'Mais', exact: true }).click();
+  await page.getByRole('button', { name: 'Caixa', exact: true }).click();
+  await page.getByLabel('Saldo atual em caixa (R$)').fill('350.50');
+  await page.getByRole('button', { name: /Salvar/ }).click();
+  await expect(page.getByText('R$ 350,50')).toBeVisible();
+  await expect(page.getByText('Saldo do caixa atualizado')).toBeVisible();
+});

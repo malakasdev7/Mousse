@@ -51,7 +51,7 @@ export function validatePayload(
       ok: false,
       error: 'O rendimento da receita deve ser maior que zero.',
     };
-  const nonnegative = ['price','qty','pack','stock','minStock','yieldQty','waste','wastePercent','quantity','unitPrice','discount','fee','deliveryCost','ingredientsCost','packagingCost','labor','extras','fees','fixedAllocation','totalWeight','totalVolume','additionalCost','wholesalePrice'];
+  const nonnegative = ['price','qty','pack','stock','minStock','yieldQty','waste','wastePercent','quantity','unitPrice','discount','fee','deliveryCost','ingredientsCost','packagingCost','labor','extras','fees','fixedAllocation','totalWeight','totalVolume','additionalCost','wholesalePrice','balance'];
   for (const key of nonnegative) {
     if (value[key] !== undefined && (typeof value[key] !== 'number' || !Number.isFinite(value[key]) || Number(value[key]) < 0)) return { ok: false, error: `Informe um valor não negativo para ${key}.` };
   }

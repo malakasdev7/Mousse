@@ -4,6 +4,7 @@ import {
   AlertTriangle,
   ArrowUpRight,
   BarChart3,
+  Banknote,
   Bell,
   Calculator,
   CheckCircle2,
@@ -77,7 +78,8 @@ type Kind =
   | 'expense'
   | 'recipe'
   | 'product'
-  | 'sale';
+  | 'sale'
+  | 'settings';
 type Stored<T> = T & { id: number };
 type ApiRecord<T = Record<string, unknown>> = {
   id: number;
@@ -208,6 +210,12 @@ type Sale = {
   status: string;
   notes: string;
 };
+type CashSettings = {
+  name: string;
+  balance: number;
+  checkedAt: string;
+  notes?: string;
+};
 
 const ingredientCategories = [
   'Laticínios',
@@ -226,6 +234,7 @@ const kindViews: Record<Kind, string> = {
   recipe: 'Receitas',
   product: 'Produtos',
   sale: 'Vendas',
+  settings: 'Caixa',
 };
 
 const nav = [
@@ -235,6 +244,7 @@ const nav = [
   { label: 'Receitas', icon: FlaskConical },
   { label: 'Produtos', icon: UtensilsCrossed },
   { label: 'Vendas', icon: ShoppingCart },
+  { label: 'Caixa', icon: Banknote },
   { label: 'Despesas', icon: WalletCards },
   { label: 'Simulador', icon: Calculator },
   { label: 'Relatórios', icon: FileText },
@@ -631,6 +641,10 @@ export default function Home() {
     .filter((record) => record.kind === 'sale')
     .map((record) => ({ ...record.payload, id: record.id }) as Stored<Sale>)
     .filter((sale) => sale.status !== 'Cancelada');
+  const dashboardCash = allRecords
+    .filter((record) => record.kind === 'settings')
+    .map((record) => record.payload as CashSettings)
+    .find((settings) => settings.name === 'Caixa');
   const switchView = (label: string) => {
     setActiveView(label);
     setMobileOpen(false);
@@ -828,6 +842,7 @@ export default function Home() {
               sales={dashboardSales}
               ingredients={dashboardIngredients.length}
               expenses={dashboardExpenses}
+              cashBalance={dashboardCash?.balance || 0}
               onNavigate={switchView}
             />
           ) : (
@@ -933,12 +948,14 @@ function Dashboard({
   sales,
   ingredients,
   expenses,
+  cashBalance,
   onNavigate,
 }: {
   products: Stored<Product>[];
   sales: Stored<Sale>[];
   ingredients: number;
   expenses: Expense[];
+  cashBalance: number;
   onNavigate: (view: string) => void;
 }) {
   const totalFixed = expenses.reduce((sum, item) => sum + item.value, 0);
@@ -1011,6 +1028,13 @@ function Dashboard({
           value={money.format(sales.length ? revenue / sales.length : 0)}
           detail={`${products.length} produtos ativos`}
           tone="cream"
+        />
+        <Metric
+          icon={<Banknote size={20} />}
+          label="Dinheiro em caixa"
+          value={money.format(cashBalance)}
+          detail="Saldo atual informado"
+          tone="sage"
         />
         <Metric
           icon={<UtensilsCrossed size={20} />}
@@ -1287,10 +1311,97 @@ function ModuleRouter({
   if (view === 'Receitas') return <RecipesView />;
   if (view === 'Produtos') return <ProductsView />;
   if (view === 'Vendas') return <SalesView />;
+  if (view === 'Caixa') return <CashView />;
   if (view === 'Simulador') return <SimulatorView />;
   if (view === 'Minha conta')
     return <AccountView user={user} onLogout={onLogout} />;
   return <ReportsView />;
+}
+
+function CashView() {
+  const records = useRecords<CashSettings>('settings');
+  const cash = records.items.find((item) => item.name === 'Caixa');
+  const [saved, setSaved] = useState(false);
+
+  async function submit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const formElement = event.currentTarget;
+    const form = new FormData(formElement);
+    await records.save(
+      {
+        name: 'Caixa',
+        balance: Number(form.get('balance')),
+        checkedAt: String(form.get('checkedAt')),
+        notes: String(form.get('notes') || ''),
+      },
+      cash?.id,
+    );
+    setSaved(true);
+    setTimeout(() => setSaved(false), 1800);
+  }
+
+  return (
+    <>
+      <ModuleHeading
+        eyebrow="FINANCEIRO"
+        title="Dinheiro em caixa"
+        subtitle="Informe quanto dinheiro a empresa possui agora. Atualize o valor sempre que fizer uma conferência do caixa."
+      />
+      {saved && <SaveToast text="Saldo do caixa atualizado" />}
+      <div className="module-layout">
+        <EditorPanel title={cash ? 'Atualizar saldo' : 'Informar saldo inicial'} editing={false} onCancel={() => undefined}>
+          <form key={`${cash?.id || 'new'}-${cash?.balance || 0}`} onSubmit={(event) => { void submit(event).catch((error) => reportOperation(error instanceof Error ? error.message : 'Não foi possível salvar o saldo.', true)); }} className="data-form">
+            <label>
+              Saldo atual em caixa (R$)
+              <input
+                name="balance"
+                type="number"
+                min="0"
+                step="0.01"
+                required
+                defaultValue={cash?.balance ?? 0}
+                inputMode="decimal"
+              />
+            </label>
+            <label>
+              Data da conferência
+              <input
+                name="checkedAt"
+                type="date"
+                required
+                defaultValue={cash?.checkedAt || new Date().toLocaleDateString('en-CA')}
+              />
+            </label>
+            <label>
+              Observações
+              <textarea
+                name="notes"
+                maxLength={2000}
+                defaultValue={cash?.notes}
+                placeholder="Ex.: dinheiro no caixa físico e contas disponíveis"
+              />
+            </label>
+            <SaveButton editing={!!cash} />
+          </form>
+        </EditorPanel>
+        <section className="panel data-panel">
+          <div className="panel-header">
+            <DataHeader title="Resumo do caixa" />
+          </div>
+          <div className="empty-state">
+            <span className="empty-icon"><Banknote size={28} /></span>
+            <h3>{money.format(cash?.balance || 0)}</h3>
+            <p>
+              {cash
+                ? `Saldo conferido em ${new Date(`${cash.checkedAt}T12:00:00`).toLocaleDateString('pt-BR')}.`
+                : 'Nenhum saldo foi informado ainda.'}
+            </p>
+            {cash?.notes && <small>{cash.notes}</small>}
+          </div>
+        </section>
+      </div>
+    </>
+  );
 }
 
 const roleLabels: Record<AppRole, string> = {

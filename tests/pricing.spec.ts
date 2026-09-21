@@ -87,4 +87,8 @@ test.describe('unidades e validação', () => {
   });
   test('bloqueia receita com rendimento zero', () => expect(validatePayload('recipe', { name: 'Teste', yieldQty: 0 }).ok).toBe(false));
   test('aceita produto válido', () => expect(validatePayload('product', { name: 'Mousse', cost: 5 }).ok).toBe(true));
+  test('aceita saldo de caixa e bloqueia valor negativo', () => {
+    expect(validatePayload('settings', { name: 'Caixa', balance: 350.5, checkedAt: '2026-09-21' }).ok).toBe(true);
+    expect(validatePayload('settings', { name: 'Caixa', balance: -1, checkedAt: '2026-09-21' }).ok).toBe(false);
+  });
 });
