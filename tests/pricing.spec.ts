@@ -74,6 +74,17 @@ test.describe('unidades e validação', () => {
   });
 
   test('bloqueia conversão incompatível', () => expect(() => convertUnit(1, 'kg', 'ml')).toThrow('Unidades incompatíveis'));
+  test('aceita ingredientes cadastrados em quilos e litros', () => {
+    expect(validatePayload('ingredient', { name: 'Chocolate', qty: 2, price: 48, baseUnit: 'kg' }).ok).toBe(true);
+    expect(validatePayload('ingredient', { name: 'Leite', qty: 1.5, price: 8, baseUnit: 'l' }).ok).toBe(true);
+  });
+  test('calcula receita em gramas a partir de ingrediente salvo em quilos', () => {
+    const rows = recalculateRecords<any>([
+      { id: 1, kind: 'ingredient', payload: { name: 'Chocolate', qty: 2, price: 48, baseUnit: 'kg' } },
+      { id: 2, kind: 'recipe', payload: { name: 'Mousse', yieldQty: 1, items: [{ ingredientId: 1, quantity: 250, unit: 'g' }] } },
+    ]);
+    expect(rows[1].payload.cost).toBe(6);
+  });
   test('bloqueia receita com rendimento zero', () => expect(validatePayload('recipe', { name: 'Teste', yieldQty: 0 }).ok).toBe(false));
   test('aceita produto válido', () => expect(validatePayload('product', { name: 'Mousse', cost: 5 }).ok).toBe(true));
 });

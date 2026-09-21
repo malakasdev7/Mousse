@@ -55,7 +55,7 @@ export function validatePayload(
   for (const key of nonnegative) {
     if (value[key] !== undefined && (typeof value[key] !== 'number' || !Number.isFinite(value[key]) || Number(value[key]) < 0)) return { ok: false, error: `Informe um valor não negativo para ${key}.` };
   }
-  if (kind === 'ingredient' && (!(Number(value.qty) > 0) || typeof value.price !== 'number' || !['g','ml','un'].includes(String(value.baseUnit)))) return { ok: false, error: 'Informe quantidade útil, preço e unidade (g, ml ou un).' };
+  if (kind === 'ingredient' && (!(Number(value.qty) > 0) || typeof value.price !== 'number' || !['g','kg','ml','l','un'].includes(String(value.baseUnit)))) return { ok: false, error: 'Informe quantidade útil, preço e unidade (g, kg, ml, l ou un).' };
   if (kind === 'packaging' && (!(Number(value.pack) > 0) || typeof value.price !== 'number')) return { ok: false, error: 'Informe quantidade e preço da embalagem.' };
   if (kind === 'sale' && !(Number(value.quantity) > 0)) return { ok: false, error: 'A quantidade vendida deve ser maior que zero.' };
   for (const key of ['waste','wastePercent','taxPercent','cardPercent','marketplacePercent','commissionPercent','targetMarginPercent']) {
