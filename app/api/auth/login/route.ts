@@ -1,84 +1,14 @@
-﻿import { signSessionToken } from "@/lib/crypto-auth";
-
-// Basic in-memory rate limiting map for login attempts
-const loginAttempts = new Map<string, { count: number; firstAttempt: number }>();
-
-function checkRateLimit(ip: string): boolean {
-  const now = Date.now();
-  const windowMs = 60 * 1000; // 1 minute window
-  const maxAttempts = 15; // Max 15 attempts per minute per IP
-
-  const record = loginAttempts.get(ip);
-  if (!record || now - record.firstAttempt > windowMs) {
-    loginAttempts.set(ip, { count: 1, firstAttempt: now });
-    return true;
-  }
-
-  if (record.count >= maxAttempts) {
-    return false;
-  }
-
-  record.count += 1;
-  return true;
-}
-
+import { sameOrigin, sessionResponse, supabaseRequest, noStore } from '@/lib/supabase-server';
 export async function POST(request: Request) {
-  const ip =
-    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
-    request.headers.get("x-real-ip") ||
-    "127.0.0.1";
-
-  if (!checkRateLimit(ip)) {
-    return Response.json(
-      { error: "Muitas tentativas de login. Aguarde um momento." },
-      { status: 429 }
-    );
-  }
-
+  if (!sameOrigin(request)) return Response.json({ error: 'Origem inválida.' }, { status: 403 });
   try {
-    const body = (await request.json().catch(() => ({}))) as {
-      username?: string;
-      password?: string;
-    };
-
-    const rawUsername = String(body.username || "Gustavo").trim();
-    if (!rawUsername || rawUsername.length < 2 || rawUsername.length > 50) {
-      return Response.json(
-        { error: "O nome de usuário deve ter entre 2 e 50 caracteres." },
-        { status: 400 }
-      );
-    }
-
-    // Capitalize display name cleanly
-    const name = rawUsername.charAt(0).toUpperCase() + rawUsername.slice(1);
-    const safeKey = rawUsername.toLowerCase().replace(/[^a-z0-9_]/g, "_");
-    const userId = `user_${safeKey}`;
-    const storeId = `store_${safeKey}`;
-    const dataOwnerId = userId;
-
-    const token = signSessionToken({
-      id: userId,
-      username: rawUsername,
-      name: name,
-      role: "admin",
-      storeId: storeId,
-      dataOwnerId: dataOwnerId,
-    });
-
-    return Response.json({
-      access_token: token,
-      user: {
-        id: userId,
-        username: rawUsername,
-        name: name,
-        role: "admin",
-        storeId: storeId,
-      },
-    });
-  } catch {
-    return Response.json(
-      { error: "Erro ao autenticar." },
-      { status: 500 }
-    );
-  }
+    const body = await request.json().catch(() => null);
+    if (typeof body?.username !== 'string' || typeof body?.password !== 'string' || !/^[a-z0-9._-]{3,32}$/i.test(body.username.trim()) || body.password.length < 8 || body.password.length > 128)
+      return Response.json({ error: 'Usuário ou senha inválidos.' }, { status: 401, headers: noStore });
+    const response = await supabaseRequest('/functions/v1/login-username', '', { method: 'POST', body: JSON.stringify({ username: body.username, password: body.password }) });
+    if (!response.ok) return Response.json({ error: response.status === 429 ? 'Muitas tentativas. Aguarde cinco minutos.' : 'Usuário ou senha inválidos.' }, { status: response.status === 429 ? 429 : response.status >= 500 ? 503 : 401, headers: noStore });
+    const session = await response.json();
+    if (!session.access_token || !session.refresh_token) throw new Error('INVALID_SESSION');
+    return sessionResponse(session);
+  } catch { return Response.json({ error: 'Login indisponível. Tente novamente.' }, { status: 503, headers: noStore }); }
 }

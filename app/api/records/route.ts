@@ -1,235 +1,99 @@
-import { and, desc, eq } from 'drizzle-orm';
-import { getDb } from '@/db';
-import { auditLogs, auditRecords } from '@/db/schema';
 import { requireUser } from '@/lib/auth';
+import { accessToken, sameOrigin, supabaseRequest, noStore } from '@/lib/supabase-server';
 import { isRecordKind, validatePayload } from '@/lib/records';
+import { recalculateRecords } from '@/lib/recipe-costs';
 
-const noStore = { 'cache-control': 'private, no-store' };
-const json = (body: unknown, init?: ResponseInit) => {
-  const headers = new Headers(init?.headers);
-  headers.set('cache-control', noStore['cache-control']);
-  return Response.json(body, { ...init, headers });
-};
-
-async function parseBody(request: Request) {
-  if (Number(request.headers.get('content-length') || 0) > 55_000)
-    throw new Error('PAYLOAD_TOO_LARGE');
-  return request.json();
-}
-function invalidRequest(error: unknown) {
-  return json(
-    {
-      error:
-        error instanceof Error && error.message === 'PAYLOAD_TOO_LARGE'
-          ? 'Registro muito grande.'
-          : 'Requisição inválida.',
-    },
-    { status: 400 },
-  );
-}
-
-async function writeAudit(values: typeof auditLogs.$inferInsert) {
-  try {
-    const db = await getDb();
-    await db.insert(auditLogs).values(values);
-  } catch (err) {
-    console.warn('Audit log write error:', err);
+const json = (body: unknown, status = 200) => Response.json(body, { status, headers: noStore });
+type Row = { id: number; kind: string; payload: Record<string, unknown>; updated_at?: string };
+async function readAll(token: string, storeId: string) {
+  const rows: Row[] = [];
+  for (let offset = 0; ; offset += 500) {
+    const response = await supabaseRequest('/rest/v1/audit_records?select=id,kind,payload,updated_at&store_id=eq.' + storeId + '&order=id.desc&limit=500&offset=' + offset, token);
+    if (!response.ok) throw new Error('READ_FAILED');
+    const page = await response.json() as Row[];
+    rows.push(...page);
+    if (page.length < 500) return rows;
   }
 }
-
-export async function GET(request: Request) {
-  const user = await requireUser(request);
-  if (!user)
-    return json(
-      { error: 'Sessão expirada. Entre novamente.' },
-      { status: 401 },
-    );
+async function handle(request: Request) {
+  if (request.method !== 'GET' && !sameOrigin(request)) return json({ error: 'Origem inválida.' }, 403);
   try {
-    const db = await getDb();
-    const records = await db
-      .select()
-      .from(auditRecords)
-      .where(eq(auditRecords.ownerId, user.dataOwnerId))
-      .orderBy(desc(auditRecords.id))
-      .limit(500);
-    return json(
-      records.map((record) => ({
-        ...record,
-        payload: JSON.parse(record.payloadJson),
-      })),
-    );
-  } catch (err) {
-    console.error('GET records error:', err);
-    return json([], { status: 200 });
-  }
-}
-
-export async function POST(request: Request) {
-  const user = await requireUser(request);
-  if (!user)
-    return json(
-      { error: 'Sessão expirada. Entre novamente.' },
-      { status: 401 },
-    );
-  if (user.role === 'viewer')
-    return json({ error: 'Seu acesso é somente para consulta.' }, { status: 403 });
-  try {
-    const body = (await parseBody(request)) as {
-      kind?: unknown;
-      payload?: unknown;
-      records?: Array<{ kind: unknown; payload: unknown }>;
-    };
-
-    const db = await getDb();
-
-    // Handle batch sync / restore
-    if (Array.isArray(body.records) && body.records.length > 0) {
-      const inserted = [];
-      for (const item of body.records) {
-        if (isRecordKind(item.kind)) {
-          const validated = validatePayload(item.kind, item.payload);
-          if (validated.ok) {
-            const payloadJson = JSON.stringify(validated.value);
-            const res = await db
-              .insert(auditRecords)
-              .values({ ownerId: user.dataOwnerId, kind: item.kind, payloadJson })
-              .returning();
-            if (res[0]) {
-              inserted.push({ ...res[0], payload: validated.value });
-            }
-          }
-        }
+    const user = await requireUser(request);
+    if (!user) return json({ error: 'Sessão expirada. Entre novamente.' }, 401);
+    const token = accessToken(request);
+    if (request.method === 'GET') return json(recalculateRecords(await readAll(token, user.storeId)));
+    if (user.role === 'viewer' || (request.method === 'DELETE' && user.role !== 'admin')) return json({ error: 'Seu nível de acesso não permite esta ação.' }, 403);
+    const text = await request.text();
+    if (text.length > 2_000_000) return json({ error: 'Arquivo muito grande. Limite: 2 MB.' }, 413);
+    let body;
+    try { body = JSON.parse(text); } catch { return json({ error: 'Requisição inválida.' }, 400); }
+    if (request.method === 'POST' && Array.isArray(body.records)) {
+      if (user.role !== 'admin') return json({ error: 'Apenas administradores podem restaurar backups.' }, 403);
+      if (!/^[a-f0-9]{64}$/.test(body.batchKey || '') || body.records.length < 1 || body.records.length > 1000) return json({ error: 'Backup inválido ou acima de 1000 registros.' }, 422);
+      const ids = new Set<number>();
+      for (const row of body.records) {
+        if (!Number.isSafeInteger(row.id) || ids.has(row.id) || !isRecordKind(row.kind)) return json({ error: 'Backup com IDs duplicados ou tipos inválidos.' }, 422);
+        ids.add(row.id);
+        const valid = validatePayload(row.kind, row.payload);
+        if (!valid.ok) return json({ error: valid.error }, 422);
+        row.payload = valid.value;
       }
-      return json({ ok: true, count: inserted.length, records: inserted }, { status: 201 });
+      const response = await supabaseRequest('/rest/v1/rpc/import_records', token, { method: 'POST', body: JSON.stringify({ p_store: user.storeId, p_batch: body.batchKey, p_records: body.records }) });
+      if (!response.ok) return json({ error: 'Backup não importado. Confira referências e campos; nenhum registro parcial foi salvo.' }, 422);
+      return json({ ok: true, count: await response.json() }, 201);
     }
-
-    if (!isRecordKind(body.kind))
-      return json({ error: 'Tipo de registro inválido.' }, { status: 400 });
-    const validated = validatePayload(body.kind, body.payload);
-    if (!validated.ok) return json({ error: validated.error }, { status: 422 });
-    const payloadJson = JSON.stringify(validated.value);
-    const result = await db
-      .insert(auditRecords)
-      .values({ ownerId: user.dataOwnerId, kind: body.kind, payloadJson })
-      .returning();
-    void writeAudit({
-      ownerId: user.dataOwnerId,
-      recordId: result[0].id,
-      kind: body.kind,
-      action: 'create',
-      afterJson: payloadJson,
+    let current: Row | undefined;
+    if (request.method !== 'POST') {
+      if (!Number.isSafeInteger(body.id) || body.id <= 0) return json({ error: 'Registro inválido.' }, 422);
+      const response = await supabaseRequest('/rest/v1/audit_records?select=id,kind,payload,updated_at&store_id=eq.' + user.storeId + '&id=eq.' + body.id, token);
+      if (!response.ok) throw new Error('READ_FAILED');
+      current = (await response.json())[0];
+      if (!current) return json({ error: 'Registro não encontrado.' }, 404);
+    }
+    if (request.method === 'DELETE') {
+      const rows = await readAll(token, user.storeId);
+      const used = rows.some(row => row.id !== body.id && (
+        row.payload.recipeId === body.id || row.payload.packagingId === body.id || row.payload.productId === body.id ||
+        (current?.kind === 'recipe' && row.kind === 'product' && row.payload.recipe === current.payload.name) ||
+        (Array.isArray(row.payload.items) && row.payload.items.some((x: {ingredientId?:number;subrecipeId?:number}) => x.ingredientId === body.id || x.subrecipeId === body.id))
+      ));
+      if (used) return json({ error: 'Este registro está em uso. Remova suas referências antes de excluir.' }, 409);
+      const response = await supabaseRequest('/rest/v1/audit_records?store_id=eq.' + user.storeId + '&id=eq.' + body.id, token, { method: 'DELETE' });
+      if (!response.ok) throw new Error('WRITE_FAILED');
+      return json({ ok: true });
+    }
+    const kind = current?.kind || body.kind;
+    if (!isRecordKind(kind)) return json({ error: 'Tipo de registro inválido.' }, 422);
+    const valid = validatePayload(kind, { ...current?.payload, ...body.payload });
+    if (!valid.ok) return json({ error: valid.error }, 422);
+    if (kind === 'recipe' || kind === 'product') {
+      const rows = await readAll(token, user.storeId);
+      const projected = recalculateRecords([...rows.filter(row => row.id !== body.id), { id: body.id || -1, kind, payload: valid.value }]);
+      const candidate = projected.find(row => row.id === (body.id || -1));
+      if (candidate?.payload.costError) return json({ error: candidate.payload.costError }, 422);
+    }
+    const requestKey = request.headers.get('idempotency-key');
+    if (request.method === 'POST' && !/^[a-f0-9-]{36}$/i.test(requestKey || '')) return json({ error: 'Identificador de salvamento ausente.' }, 422);
+    if (request.method === 'POST') {
+      const prior = await supabaseRequest('/rest/v1/audit_records?select=id,kind,payload&store_id=eq.' + user.storeId + '&request_key=eq.' + requestKey, token);
+      if (!prior.ok) throw new Error('READ_FAILED');
+      const rows = await prior.json();
+      if (rows[0]) return json(rows[0]);
+    }
+    const path = request.method === 'POST' ? '/rest/v1/audit_records' : '/rest/v1/audit_records?store_id=eq.' + user.storeId + '&id=eq.' + body.id;
+    const response = await supabaseRequest(path, token, {
+      method: request.method === 'POST' ? 'POST' : 'PATCH',
+      headers: { Prefer: 'return=representation' },
+      body: JSON.stringify(request.method === 'POST' ? { store_id: user.storeId, kind, payload: valid.value, request_key: requestKey } : { payload: valid.value }),
     });
-    return json({ ...result[0], payload: validated.value }, { status: 201 });
-  } catch (error) {
-    console.error('POST records error:', error);
-    return invalidRequest(error);
+    if (!response.ok) return json({ error: 'Não foi possível salvar. Seus campos foram mantidos; tente novamente.' }, 503);
+    const result = (await response.json())[0];
+    return json(result, request.method === 'POST' ? 201 : 200);
+  } catch {
+    return json({ error: 'Não foi possível acessar os dados da empresa. Verifique a conexão e tente novamente.' }, 503);
   }
 }
-
-export async function PUT(request: Request) {
-  const user = await requireUser(request);
-  if (!user)
-    return json(
-      { error: 'Sessão expirada. Entre novamente.' },
-      { status: 401 },
-    );
-  if (user.role === 'viewer')
-    return json({ error: 'Seu acesso é somente para consulta.' }, { status: 403 });
-  try {
-    const body = (await parseBody(request)) as {
-      id?: number;
-      payload?: unknown;
-    };
-    if (!Number.isInteger(body.id) || Number(body.id) <= 0)
-      return json({ error: 'Registro inválido.' }, { status: 400 });
-    const db = await getDb();
-    const current = await db
-      .select()
-      .from(auditRecords)
-      .where(
-        and(
-          eq(auditRecords.id, body.id!),
-          eq(auditRecords.ownerId, user.dataOwnerId),
-        ),
-      )
-      .limit(1);
-    if (!current[0] || !isRecordKind(current[0].kind))
-      return json({ error: 'Registro não encontrado.' }, { status: 404 });
-    const validated = validatePayload(current[0].kind, body.payload);
-    if (!validated.ok) return json({ error: validated.error }, { status: 422 });
-    const payloadJson = JSON.stringify(validated.value);
-    const result = await db
-      .update(auditRecords)
-      .set({ payloadJson, updatedAt: new Date().toISOString() })
-      .where(
-        and(
-          eq(auditRecords.id, body.id!),
-          eq(auditRecords.ownerId, user.dataOwnerId),
-        ),
-      )
-      .returning();
-    void writeAudit({
-      ownerId: user.dataOwnerId,
-      recordId: body.id!,
-      kind: current[0].kind,
-      action: 'update',
-      beforeJson: current[0].payloadJson,
-      afterJson: payloadJson,
-    });
-    return json({ ...result[0], payload: validated.value });
-  } catch (error) {
-    console.error('PUT records error:', error);
-    return invalidRequest(error);
-  }
-}
-
-export async function DELETE(request: Request) {
-  const user = await requireUser(request);
-  if (!user)
-    return json(
-      { error: 'Sessão expirada. Entre novamente.' },
-      { status: 401 },
-    );
-  if (user.role !== 'admin')
-    return json(
-      { error: 'Somente administradores podem excluir.' },
-      { status: 403 },
-    );
-  try {
-    const body = (await parseBody(request)) as { id?: number };
-    if (!Number.isInteger(body.id) || Number(body.id) <= 0)
-      return json({ error: 'Registro inválido.' }, { status: 400 });
-    const db = await getDb();
-    const current = await db
-      .select()
-      .from(auditRecords)
-      .where(
-        and(
-          eq(auditRecords.id, body.id!),
-          eq(auditRecords.ownerId, user.dataOwnerId),
-        ),
-      )
-      .limit(1);
-    if (!current[0])
-      return json({ error: 'Registro não encontrado.' }, { status: 404 });
-    void writeAudit({
-      ownerId: user.dataOwnerId,
-      recordId: body.id!,
-      kind: current[0].kind,
-      action: 'delete',
-      beforeJson: current[0].payloadJson,
-    });
-    await db
-      .delete(auditRecords)
-      .where(
-        and(
-          eq(auditRecords.id, body.id!),
-          eq(auditRecords.ownerId, user.dataOwnerId),
-        ),
-      );
-    return json({ ok: true });
-  } catch (error) {
-    console.error('DELETE records error:', error);
-    return invalidRequest(error);
-  }
-}
+export const GET = handle;
+export const POST = handle;
+export const PUT = handle;
+export const DELETE = handle;

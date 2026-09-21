@@ -1,4 +1,4 @@
-import { verifySessionToken } from './crypto-auth';
+import { accessToken } from './supabase-server';
 
 export type AppRole = 'admin' | 'employee' | 'viewer';
 export type CurrentUser = {
@@ -7,6 +7,7 @@ export type CurrentUser = {
   name: string;
   role: AppRole;
   storeId: string;
+  companyName: string;
   dataOwnerId: string;
 };
 
@@ -15,7 +16,7 @@ type Profile = { username?: string; display_name?: string };
 type Membership = {
   store_id?: string;
   role?: AppRole;
-  stores?: { legacy_owner_id?: string | null } | null;
+  stores?: { legacy_owner_id?: string | null; name?: string } | null;
 };
 
 async function supabaseJson<T>(path: string, token: string) {
@@ -31,28 +32,9 @@ async function supabaseJson<T>(path: string, token: string) {
 }
 
 export async function requireUser(request: Request): Promise<CurrentUser | null> {
-  const authorization = request.headers.get('authorization');
-  const token = authorization?.match(/^Bearer\s+(.+)$/i)?.[1];
-  if (!token) return null;
+  const token = accessToken(request);
+  if (!token || token.startsWith('dm_')) return null;
 
-  // 1. Direct cryptographically signed session token
-  if (token.startsWith('dm_')) {
-    const verified = verifySessionToken(token);
-    if (verified) {
-      return {
-        id: verified.id,
-        username: verified.username,
-        name: verified.name,
-        role: verified.role,
-        storeId: verified.storeId,
-        dataOwnerId: verified.dataOwnerId,
-      };
-    }
-    return null;
-  }
-
-
-  // 2. Supabase token fallback
   const authUser = await supabaseJson<AuthUser>('/auth/v1/user', token);
   if (!authUser?.id) return null;
   const userId = encodeURIComponent(authUser.id);
@@ -62,7 +44,7 @@ export async function requireUser(request: Request): Promise<CurrentUser | null>
       token,
     ),
     supabaseJson<Membership[]>(
-      `/rest/v1/store_members?select=store_id,role,stores(legacy_owner_id)&user_id=eq.${userId}&limit=1`,
+      `/rest/v1/store_members?select=store_id,role,stores(legacy_owner_id,name)&user_id=eq.${userId}&order=created_at.asc&limit=1`,
       token,
     ),
   ]);
@@ -82,6 +64,7 @@ export async function requireUser(request: Request): Promise<CurrentUser | null>
     name: profile.display_name,
     role: membership.role,
     storeId: membership.store_id,
+    companyName: membership.stores?.name || 'Minha empresa',
     dataOwnerId: membership.stores?.legacy_owner_id || authUser.id,
   };
 }

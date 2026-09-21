@@ -52,7 +52,7 @@ import {
   WalletCards,
   X,
 } from 'lucide-react';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import {
   calculateBreakEven,
@@ -91,6 +91,7 @@ type CurrentUser = {
   name: string;
   role: AppRole;
   storeId: string;
+  companyName: string;
 };
 type Ingredient = {
   name: string;
@@ -126,6 +127,7 @@ type Expense = {
   notes?: string;
 };
 type RecipeItem = {
+  subrecipeId?: number;
   ingredientId: number;
   name: string;
   quantity: number;
@@ -143,8 +145,24 @@ type Recipe = {
   unit: number;
   notes: string;
   preparationMinutes: number;
+  totalWeight?: number;
+  totalVolume?: number;
+  instructions?: string;
+  version?: number;
+  additionalCost?: number;
+  costError?: string;
 };
 type Product = {
+  recipeId?: number;
+  packagingId?: number;
+  targetMarginPercent?: number;
+  flavor?: string;
+  weightOrVolume?: number;
+  channel?: string;
+  delivery?: number;
+  recommendedPrice?: number;
+  costError?: string;
+  costOutdated?: boolean;
   name: string;
   size: string;
   recipe: string;
@@ -238,133 +256,38 @@ function loadPersistedRecords(): ApiRecord[] | null {
   return null;
 }
 
-function savePersistedRecords(records: ApiRecord[]) {
-  if (typeof window === 'undefined') return;
-  try {
-    localStorage.setItem(PERSISTENCE_STORAGE_KEY, JSON.stringify(records));
-  } catch (e) {
-    console.warn('Erro ao salvar cache local:', e);
-  }
-}
-
-let cachedRecords: ApiRecord[] | null = typeof window !== 'undefined' ? loadPersistedRecords() : null;
+let cachedRecords: ApiRecord[] | null = null;
 let pendingFetch: Promise<ApiRecord[]> | null = null;
+let cacheGeneration = 0;
+let currentRole: AppRole = 'viewer';
 const recordListeners = new Set<(records: ApiRecord[]) => void>();
-
 function notifyListeners() {
-  if (cachedRecords) {
-    const data = cachedRecords;
-    savePersistedRecords(data);
-    recordListeners.forEach((fn) => fn(data));
-  }
+  if (cachedRecords) recordListeners.forEach(fn => fn(cachedRecords!));
+}
+function resetRecords() {
+  cacheGeneration++;
+  cachedRecords = null;
+  pendingFetch = null;
+  recordListeners.forEach(fn => fn([]));
+}
+async function requestRecords<T = Record<string, unknown>>(_forceFresh = false): Promise<ApiRecord<T>[]> {
+  if (pendingFetch) return pendingFetch as Promise<ApiRecord<T>[]>;
+  const generation = cacheGeneration;
+  pendingFetch = authenticatedFetch('/api/records').then(async response => {
+    if (!response.ok) throw new Error((await response.json()).error || 'Não foi possível carregar os dados.');
+    const rows = await response.json() as ApiRecord[];
+    if (generation === cacheGeneration) { cachedRecords = rows; notifyListeners(); }
+    return generation === cacheGeneration ? rows : [];
+  }).finally(() => { if (generation === cacheGeneration) pendingFetch = null; });
+  return pendingFetch as Promise<ApiRecord<T>[]>;
+}
+function reportOperation(status: string, error = false) {
+  window.dispatchEvent(new CustomEvent('dm:operation', { detail: { status, error } }));
 }
 
-async function requestRecords<T = Record<string, unknown>>(forceFresh = false): Promise<ApiRecord<T>[]> {
-  if (!cachedRecords) {
-    const local = loadPersistedRecords();
-    if (local) {
-      cachedRecords = local;
-      notifyListeners();
-    }
-  }
-
-  if (cachedRecords && !forceFresh) {
-    if (!pendingFetch) {
-      pendingFetch = authenticatedFetch('/api/records')
-        .then(async (res) => {
-          if (res.ok) {
-            const fresh = (await res.json()) as ApiRecord[];
-            if (fresh.length > 0) {
-              cachedRecords = fresh;
-              notifyListeners();
-              return fresh as ApiRecord<T>[];
-            } else if (cachedRecords && cachedRecords.length > 0) {
-              // Auto-sync local records to server if server is empty
-              try {
-                const syncRes = await authenticatedFetch('/api/records', {
-                  method: 'POST',
-                  headers: { 'content-type': 'application/json' },
-                  body: JSON.stringify({
-                    records: cachedRecords.map((r) => ({ kind: r.kind, payload: r.payload })),
-                  }),
-                });
-                if (syncRes.ok) {
-                  const synced = (await syncRes.json()) as { records: ApiRecord[] };
-                  if (synced.records?.length) {
-                    cachedRecords = synced.records;
-                    notifyListeners();
-                    return cachedRecords as ApiRecord<T>[];
-                  }
-                }
-              } catch (syncErr) {
-                console.warn('Auto-sync error:', syncErr);
-              }
-            }
-          }
-          return (cachedRecords || []) as ApiRecord<T>[];
-        })
-        .catch(() => (cachedRecords || []) as ApiRecord<T>[])
-        .finally(() => {
-          pendingFetch = null;
-        });
-    }
-    return cachedRecords as ApiRecord<T>[];
-  }
-
-  if (pendingFetch) {
-    return pendingFetch as Promise<ApiRecord<T>[]>;
-  }
-
-  pendingFetch = authenticatedFetch('/api/records')
-    .then(async (response) => {
-      if (response.status === 401)
-        throw new Error('Sua sessão expirou. Atualize a página para entrar novamente.');
-      if (!response.ok) throw new Error('Não foi possível carregar os dados.');
-      const data = (await response.json()) as ApiRecord[];
-      if (data.length > 0) {
-        cachedRecords = data;
-        notifyListeners();
-        return data as ApiRecord<T>[];
-      } else {
-        const local = loadPersistedRecords();
-        if (local && local.length > 0) {
-          try {
-            const syncRes = await authenticatedFetch('/api/records', {
-              method: 'POST',
-              headers: { 'content-type': 'application/json' },
-              body: JSON.stringify({
-                records: local.map((r) => ({ kind: r.kind, payload: r.payload })),
-              }),
-            });
-            if (syncRes.ok) {
-              const synced = (await syncRes.json()) as { records: ApiRecord[] };
-              if (synced.records?.length) {
-                cachedRecords = synced.records;
-                notifyListeners();
-                return cachedRecords as ApiRecord<T>[];
-              }
-            }
-          } catch (syncErr) {
-            console.warn('Auto-sync error:', syncErr);
-          }
-          cachedRecords = local;
-          notifyListeners();
-          return local as ApiRecord<T>[];
-        }
-      }
-      cachedRecords = data;
-      notifyListeners();
-      return data as ApiRecord<T>[];
-    })
-    .finally(() => {
-      pendingFetch = null;
-    });
-
-  return pendingFetch;
-}
-
-function downloadCompleteBackup() {
-  const records = cachedRecords || loadPersistedRecords() || [];
+async function downloadCompleteBackup() {
+  let records: ApiRecord[];
+  try { records = await requestRecords(); } catch { reportOperation('Não foi possível exportar. Tente novamente.', true); return; }
   const backup = {
     appName: 'Doce Margem / Mousse',
     version: '2.0',
@@ -383,6 +306,18 @@ function downloadCompleteBackup() {
   URL.revokeObjectURL(url);
 }
 
+function downloadLegacyBackup() {
+  const records = loadPersistedRecords();
+  if (!records?.length) { reportOperation('Nenhum cadastro antigo encontrado neste navegador.'); return; }
+  const url = URL.createObjectURL(new Blob([JSON.stringify({ version: 'legacy', records }, null, 2)], { type: 'application/json' }));
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = 'mousse-backup-antigo-do-navegador.json';
+  link.click();
+  URL.revokeObjectURL(url);
+  reportOperation('Cópia antiga exportada. Confira a empresa de origem antes de importar.');
+}
+
 async function restoreCompleteBackupFromFile(
   file: File,
   onSuccess: (count: number) => void,
@@ -396,15 +331,15 @@ async function restoreCompleteBackupFromFile(
       throw new Error('O arquivo de backup não possui dados válidos.');
     }
 
-    const payloadList = records.map((r: any) => ({
-      kind: r.kind || 'product',
-      payload: r.payload || r,
-    }));
+    if (!window.confirm('Importar este backup na empresa atual? Confira a origem antes de continuar.')) { onError('Importação cancelada.'); return; }
+    const payloadList = records.map((r: any) => ({ id: r.id, kind: r.kind, payload: r.payload }));
+    const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify(payloadList)));
+    const batchKey = Array.from(new Uint8Array(digest)).map(x => x.toString(16).padStart(2, '0')).join('');
 
     const response = await authenticatedFetch('/api/records', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ records: payloadList }),
+      body: JSON.stringify({ records: payloadList, batchKey }),
     });
 
     if (!response.ok) {
@@ -413,8 +348,8 @@ async function restoreCompleteBackupFromFile(
 
     const resData = (await response.json()) as { count?: number };
     const fresh = await requestRecords(true);
-    savePersistedRecords(fresh);
-    onSuccess(resData.count || records.length);
+    void fresh;
+    onSuccess(resData.count ?? 0);
   } catch (err: any) {
     onError(err.message || 'Erro ao processar o arquivo de backup.');
   }
@@ -558,7 +493,7 @@ function useRecords<T extends object>(kind: Kind) {
     if (cachedRecords) {
       handler(cachedRecords);
     } else {
-      requestRecords().catch(() => setLoading(false));
+      requestRecords().catch(reason => { setLoading(false); reportOperation(reason.message, true); });
     }
 
     return () => {
@@ -566,85 +501,42 @@ function useRecords<T extends object>(kind: Kind) {
     };
   }, [kind]);
 
+  const inFlight = useRef(false);
+  const retryKey = useRef<{ payload: string; key: string } | null>(null);
   async function save(payload: T, id?: number) {
-    const tempId = id || -Math.floor(Math.random() * 1000000 + 1);
-    const optimisticItem: Stored<T> = { ...payload, id: tempId };
-
-    if (id) {
-      setItems((current) => current.map((item) => (item.id === id ? optimisticItem : item)));
-      if (cachedRecords) {
-        cachedRecords = cachedRecords.map((rec) =>
-          rec.id === id ? { ...rec, payload: payload as Record<string, unknown> } : rec,
-        );
-        notifyListeners();
-      }
-    } else {
-      setItems((current) => [optimisticItem, ...current]);
-      if (cachedRecords) {
-        cachedRecords = [
-          { id: tempId, kind, payload: payload as Record<string, unknown> },
-          ...cachedRecords,
-        ];
-        notifyListeners();
-      }
-    }
-
+    if (inFlight.current) throw new Error('Salvamento em andamento.');
+    inFlight.current = true;
+    reportOperation('Salvando...');
+    const serialized = JSON.stringify(payload);
+    if (retryKey.current?.payload !== serialized) retryKey.current = { payload: serialized, key: crypto.randomUUID() };
     try {
       const response = await authenticatedFetch('/api/records', {
         method: id ? 'PUT' : 'POST',
-        headers: { 'content-type': 'application/json' },
+        headers: { 'content-type': 'application/json', 'idempotency-key': retryKey.current.key },
         body: JSON.stringify(id ? { id, payload } : { kind, payload }),
       });
-
-      if (!response.ok) {
-        const body = (await response.json().catch(() => null)) as { error?: string } | null;
-        throw new Error(body?.error || 'Não foi possível salvar.');
-      }
-
-      const record = (await response.json()) as ApiRecord<T>;
-      const realItem = { ...record.payload, id: record.id } as Stored<T>;
-
-      setItems((current) =>
-        current.map((item) => (item.id === tempId ? realItem : item)),
-      );
-
-      if (cachedRecords) {
-        cachedRecords = cachedRecords.map((rec) =>
-          rec.id === tempId ? (record as ApiRecord) : rec,
-        );
-        notifyListeners();
-      }
-
-      return realItem;
-    } catch (err) {
-      if (!id) {
-        setItems((current) => current.filter((item) => item.id !== tempId));
-        if (cachedRecords) {
-          cachedRecords = cachedRecords.filter((rec) => rec.id !== tempId);
-          notifyListeners();
-        }
-      }
-      throw err;
-    }
-  }
-
-  async function remove(id: number) {
-    setItems((current) => current.filter((item) => item.id !== id));
-    if (cachedRecords) {
-      cachedRecords = cachedRecords.filter((rec) => rec.id !== id);
+      const record = await response.json();
+      if (!response.ok) throw new Error(record.error || 'Não foi possível salvar.');
+      cachedRecords = [record, ...(cachedRecords || []).filter(r => r.id !== record.id)];
       notifyListeners();
-    }
-
+      retryKey.current = null;
+      reportOperation('Salvo na conta');
+      requestRecords(true).catch(() => reportOperation('Salvo na conta. Atualize para recarregar os custos.', false));
+      return { ...record.payload, id: record.id } as Stored<T>;
+    } catch (reason) {
+      reportOperation(reason instanceof Error ? reason.message : 'Falha ao salvar. Tente novamente.', true);
+      throw reason;
+    } finally { inFlight.current = false; }
+  }
+  async function remove(id: number) {
     try {
-      const response = await authenticatedFetch('/api/records', {
-        method: 'DELETE',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ id }),
-      });
-      if (!response.ok) throw new Error('Não foi possível excluir.');
-    } catch (err) {
-      requestRecords(true).catch(() => {});
-      throw err;
+      const response = await authenticatedFetch('/api/records', { method: 'DELETE', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id }) });
+      if (!response.ok) throw new Error((await response.json()).error || 'Não foi possível excluir.');
+      cachedRecords = (cachedRecords || []).filter(r => r.id !== id);
+      notifyListeners();
+      reportOperation('Exclusão confirmada na conta');
+    } catch (reason) {
+      reportOperation(reason instanceof Error ? reason.message : 'Falha ao excluir.', true);
     }
   }
 
@@ -658,6 +550,24 @@ export default function Home() {
   const [activeView, setActiveView] = useState('Visão geral');
   const [searchQuery, setSearchQuery] = useState('');
   const [allRecords, setAllRecords] = useState<ApiRecord[]>([]);
+  const [operation, setOperation] = useState({ status: '', error: false });
+  useEffect(() => {
+    const expired = () => { resetRecords(); setAllRecords([]); setUser(null); };
+    const feedback = (event: Event) => setOperation((event as CustomEvent).detail);
+    window.addEventListener('dm:session-expired', expired);
+    window.addEventListener('dm:operation', feedback);
+    return () => { window.removeEventListener('dm:session-expired', expired); window.removeEventListener('dm:operation', feedback); };
+  }, []);
+  useEffect(() => {
+    if (!user) return;
+    currentRole = user.role;
+    const update = (rows: ApiRecord[]) => setAllRecords(rows);
+    recordListeners.add(update);
+    const reload = () => requestRecords(true).catch(reason => reportOperation(reason.message, true));
+    window.addEventListener('focus', reload);
+    const timer = window.setInterval(reload, 60000);
+    return () => { recordListeners.delete(update); window.removeEventListener('focus', reload); clearInterval(timer); };
+  }, [user]);
   useEffect(() => {
     let active = true;
     getSupabaseBrowserClient()
@@ -703,6 +613,7 @@ export default function Home() {
 
   const logout = async () => {
     await (await getSupabaseBrowserClient()).auth.signOut();
+    resetRecords();
     setAllRecords([]);
     setUser(null);
   };
@@ -743,7 +654,8 @@ export default function Home() {
           .slice(0, 6)
       : [];
   return (
-    <main className="min-h-screen bg-background text-foreground">
+    <main className="min-h-screen bg-background text-foreground" data-role={user.role}>
+      {operation.status && <div className={`operation-status ${operation.error ? 'error' : ''}`} role={operation.error ? 'alert' : 'status'}>{operation.status}{operation.error && <button onClick={() => requestRecords(true).then(() => setOperation({ status: '', error: false })).catch(e => reportOperation(e.message, true))}>Tentar carregar novamente</button>}<button aria-label="Fechar mensagem" onClick={() => setOperation({status: '', error: false})}>×</button></div>}
       <aside className={`sidebar-shell ${mobileOpen ? 'sidebar-open' : ''}`}>
         <div className="brand-row">
           <div className="brand-mark">
@@ -751,7 +663,7 @@ export default function Home() {
           </div>
           <div>
             <p className="brand-name">Doce Margem</p>
-            <p className="brand-kicker">Gestão de preços</p>
+            <p className="brand-kicker">{user.companyName}</p>
           </div>
           <button
             className="mobile-close"
@@ -812,7 +724,7 @@ export default function Home() {
       <nav className="mobile-dock" aria-label="Navegação rápida">
         {[
           { label: 'Visão geral', short: 'Início', icon: BarChart3 },
-          { label: 'Ingredientes', short: 'Insumos', icon: ShoppingBasket },
+          { label: 'Simulador', short: 'Preços', icon: Calculator },
           { label: 'Produtos', short: 'Produtos', icon: UtensilsCrossed },
           { label: 'Vendas', short: 'Vendas', icon: ShoppingCart },
         ].map(({ label, short, icon: Icon }) => (
@@ -942,15 +854,15 @@ function AuthLoading() {
 function SignInScreen({ onSignedIn }: { onSignedIn: () => Promise<void> }) {
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
-  const [username, setUsername] = useState('Gustavo');
-  const [password, setPassword] = useState('admin123');
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setSubmitting(true);
     setError('');
     try {
-      await signInWithUsername(username.trim() || 'Gustavo', password);
+      await signInWithUsername(username.trim(), password);
       await onSignedIn();
     } catch (reason) {
       setError(
@@ -975,9 +887,9 @@ function SignInScreen({ onSignedIn }: { onSignedIn: () => Promise<void> }) {
         <p className="eyebrow">ACESSO À LOJA</p>
         <h1>Entre na sua conta.</h1>
         <p>
-          Suas credenciais de acesso já estão salvas abaixo para entrar com 1 clique.
+          Entre com sua conta para acessar os dados da empresa em qualquer dispositivo.
         </p>
-        <form className="auth-form" onSubmit={submit}>
+        <form className="auth-form" onSubmit={(event) => { void submit(event).catch(reason => reportOperation(reason instanceof Error ? reason.message : 'Não foi possível salvar.', true)); }}>
           <label>
             <span>Usuário (Seu Nome)</span>
             <input
@@ -988,7 +900,7 @@ function SignInScreen({ onSignedIn }: { onSignedIn: () => Promise<void> }) {
               minLength={2}
               maxLength={32}
               required
-              placeholder="Gustavo"
+              placeholder="seu.usuario"
             />
           </label>
           <label>
@@ -999,10 +911,10 @@ function SignInScreen({ onSignedIn }: { onSignedIn: () => Promise<void> }) {
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               autoComplete="current-password"
-              minLength={4}
+              minLength={8}
               maxLength={128}
               required
-              placeholder="admin123"
+              placeholder="Sua senha"
             />
           </label>
           {error && <p className="auth-error">{error}</p>}
@@ -1010,9 +922,7 @@ function SignInScreen({ onSignedIn }: { onSignedIn: () => Promise<void> }) {
             <UserRound size={17} /> {submitting ? 'Entrando...' : 'Entrar no Sistema'}
           </button>
         </form>
-        <div style={{ marginTop: '0.85rem', padding: '0.65rem 0.85rem', background: 'var(--muted)', borderRadius: '0.5rem', fontSize: '0.8rem', color: 'var(--muted-foreground)', textAlign: 'center' }}>
-          ✓ Credenciais prontas: <strong>Usuário: {username || 'Gustavo'}</strong> | <strong>Senha: {password}</strong>
-        </div>
+        <p className="auth-help">Esqueceu a senha? Peça a um administrador da empresa para redefinir seu acesso.</p>
       </section>
     </main>
   );
@@ -1426,16 +1336,9 @@ function AccountView({
     setError('');
     setNotice('');
     try {
-      const [client, config] = await Promise.all([
-        getSupabaseBrowserClient(),
-        getAuthConfig(),
-      ]);
-      const { data } = await client.auth.getSession();
-      const response = await fetch(`${config.url}/functions/v1/account-admin`, {
+      const response = await authenticatedFetch('/api/auth/accounts', {
         method: 'POST',
         headers: {
-          apikey: config.publishableKey,
-          authorization: `Bearer ${data.session?.access_token || ''}`,
           'content-type': 'application/json',
         },
         body: JSON.stringify({
@@ -1478,7 +1381,7 @@ function AccountView({
           <small>ACESSO</small>
           <p>{roleLabels[user.role]}</p>
           <span>
-            <CheckCircle2 size={15} /> Dados protegidos e isolados por usuário
+            <CheckCircle2 size={15} /> Dados da empresa: {user.companyName}
           </span>
         </div>
         <button className="account-logout" onClick={onLogout}>
@@ -1548,15 +1451,15 @@ function AccountView({
               <ShieldCheck size={22} style={{ color: '#10b981' }} /> Backup & Segurança dos Dados
             </h2>
             <p style={{ fontSize: '0.85rem', color: 'var(--muted-foreground)', marginTop: '0.25rem' }}>
-              Seus dados (produtos, receitas, despesas, vendas e insumos) são salvos de forma redundante: no seu navegador e no banco de dados.
+              Seus cadastros e movimentações são salvos na conta da empresa após confirmação do banco. Você pode exportar uma cópia e importar backups antigos.
             </p>
           </div>
           <span className="rate-badge" style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem', color: '#34d399', background: 'rgba(16, 185, 129, 0.15)' }}>
-            <Database size={14} /> Auto-sincronizado
+            <Database size={14} /> Banco da empresa
           </span>
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '1rem' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 280px), 1fr))', gap: '1rem' }}>
           <div className="panel" style={{ padding: '1.25rem', background: 'var(--card)' }}>
             <h3 style={{ fontSize: '1rem', margin: '0 0 0.4rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
               <Download size={18} style={{ color: 'var(--primary)' }} /> Baixar Cópia de Segurança
@@ -1572,6 +1475,7 @@ function AccountView({
             >
               <Download size={16} /> Baixar Backup Completo (.json)
             </Button>
+            <Button type="button" onClick={downloadLegacyBackup} style={{ width: '100%', marginTop: 12 }}>Exportar dados antigos deste navegador</Button>
           </div>
 
           <div className="panel" style={{ padding: '1.25rem', background: 'var(--card)' }}>
@@ -1691,7 +1595,7 @@ function IngredientsView() {
         >
           <form
             key={editing?.id || 'new'}
-            onSubmit={submit}
+            onSubmit={async event => { try { await submit(event); } catch (error) { reportOperation(error instanceof Error ? error.message : 'Não foi possível salvar. Tente novamente.', true); } }}
             className="data-form"
           >
             <label>
@@ -1948,7 +1852,7 @@ function PackagingView() {
         >
           <form
             key={editing?.id || 'new'}
-            onSubmit={submit}
+            onSubmit={async event => { try { await submit(event); } catch (error) { reportOperation(error instanceof Error ? error.message : 'Não foi possível salvar. Tente novamente.', true); } }}
             className="data-form"
           >
             <label>
@@ -2096,7 +2000,7 @@ function ExpensesView() {
         >
           <form
             key={editing?.id || 'new'}
-            onSubmit={submit}
+            onSubmit={async event => { try { await submit(event); } catch (error) { reportOperation(error instanceof Error ? error.message : 'Não foi possível salvar. Tente novamente.', true); } }}
             className="data-form"
           >
             <div className="form-group" style={{ marginBottom: '1rem' }}>
@@ -2288,8 +2192,11 @@ function RecipesView() {
   >([]);
   const [wastePreview, setWastePreview] = useState(0);
   const [yieldPreview, setYieldPreview] = useState(1);
+  const availableIngredients = [...ingredients.items, ...records.items
+    .filter(r => r.id !== editing?.id && !r.costError)
+    .map(r => ({ id: -r.id, name: 'Sub-receita: ' + r.name, price: r.cost, qty: r.yieldQty, baseUnit: r.yieldUnit, wastePercent: 0 }))];
   const rawCost = draftItems.reduce((sum, item) => {
-    const ingredient = ingredients.items.find(
+    const ingredient = availableIngredients.find(
       (candidate) => candidate.id === item.ingredientId,
     );
     return (
@@ -2309,7 +2216,7 @@ function RecipesView() {
     setEditing(recipe);
     setDraftItems(
       (recipe.items || []).map((item) => ({
-        ingredientId: item.ingredientId,
+        ingredientId: item.subrecipeId ? -item.subrecipeId : item.ingredientId,
         quantity: item.quantity,
       })),
     );
@@ -2324,7 +2231,7 @@ function RecipesView() {
     setYieldPreview(1);
   }
   function addIngredient() {
-    const firstAvailable = ingredients.items.find(
+    const firstAvailable = availableIngredients.find(
       (ingredient) =>
         !draftItems.some((item) => item.ingredientId === ingredient.id),
     );
@@ -2341,7 +2248,7 @@ function RecipesView() {
     const yieldQty = Number(form.get('yieldQty'));
     const waste = Number(form.get('waste'));
     const items: RecipeItem[] = draftItems.map((draft) => {
-      const ingredient = ingredients.items.find(
+      const ingredient = availableIngredients.find(
         (candidate) => candidate.id === draft.ingredientId,
       )!;
       const unitCost = ingredientUnitCost(
@@ -2350,7 +2257,8 @@ function RecipesView() {
         ingredient.wastePercent,
       );
       return {
-        ingredientId: ingredient.id,
+        ingredientId: ingredient.id > 0 ? ingredient.id : 0,
+        subrecipeId: ingredient.id < 0 ? -ingredient.id : undefined,
         name: ingredient.name,
         quantity: draft.quantity,
         unit: ingredient.baseUnit || 'un',
@@ -2371,6 +2279,10 @@ function RecipesView() {
         unit: cost / yieldQty,
         notes: String(form.get('notes')),
         preparationMinutes: Number(form.get('preparationMinutes') || 0),
+        totalWeight: Number(form.get('totalWeight') || 0),
+        totalVolume: Number(form.get('totalVolume') || 0),
+        instructions: String(form.get('instructions') || ''),
+        version: editing?.version || 1,
       },
       editing?.id,
     );
@@ -2396,7 +2308,7 @@ function RecipesView() {
         >
           <form
             key={editing?.id || 'new'}
-            onSubmit={submit}
+            onSubmit={async event => { try { await submit(event); } catch (error) { reportOperation(error instanceof Error ? error.message : 'Não foi possível salvar. Tente novamente.', true); } }}
             className="data-form"
           >
             <label>
@@ -2408,20 +2320,28 @@ function RecipesView() {
                 placeholder="Ex.: Mousse de chocolate"
               />
             </label>
+            <details className="form-details">
+              <summary>Ficha técnica: peso, volume e preparo</summary>
+              <div className="form-row">
+                <label>Peso total (g)<input name="totalWeight" type="number" min="0" step="0.001" defaultValue={editing?.totalWeight || 0} /></label>
+                <label>Volume total (ml)<input name="totalVolume" type="number" min="0" step="0.001" defaultValue={editing?.totalVolume || 0} /></label>
+              </div>
+              <label>Modo de preparo<textarea name="instructions" maxLength={2000} defaultValue={editing?.instructions} /></label>
+            </details>
             <div className="ingredient-builder">
               <div className="builder-heading">
                 <div>
                   <span>Ingredientes da receita</span>
                   <small>
-                    {ingredients.items.length} disponíveis na sua conta
+                    {availableIngredients.length} disponíveis na sua conta
                   </small>
                 </div>
                 <button
                   type="button"
                   onClick={addIngredient}
                   disabled={
-                    !ingredients.items.length ||
-                    draftItems.length >= ingredients.items.length
+                    !availableIngredients.length ||
+                    draftItems.length >= availableIngredients.length
                   }
                 >
                   <Plus size={14} /> Adicionar
@@ -2429,14 +2349,14 @@ function RecipesView() {
               </div>
               {ingredients.loading ? (
                 <Loading />
-              ) : !ingredients.items.length ? (
+              ) : !availableIngredients.length ? (
                 <div className="builder-empty">
                   <AlertTriangle size={18} />
                   <span>Cadastre ingredientes antes de montar a receita.</span>
                 </div>
               ) : draftItems.length ? (
                 draftItems.map((draft, index) => {
-                  const ingredient = ingredients.items.find(
+                  const ingredient = availableIngredients.find(
                     (item) => item.id === draft.ingredientId,
                   );
                   const lineCost = ingredient
@@ -2469,7 +2389,7 @@ function RecipesView() {
                             )
                           }
                         >
-                          {ingredients.items.map((item) => (
+                          {availableIngredients.map((item) => (
                             <option key={item.id} value={item.id}>
                               {item.name} ·{' '}
                               {money.format(
@@ -2712,7 +2632,8 @@ function ProductsView() {
     const result = calculatePricing({
       ingredients: ingredientsCost,
       packaging: packageCost,
-      addons: extras + fees,
+      addons: extras,
+      delivery: fees,
       labor,
       wastePercent,
       fixedAllocation,
@@ -2722,6 +2643,7 @@ function ProductsView() {
       sellerCommissionPercent: commissionPercent,
       targetMarginPercent: margin,
     });
+    if (!result.valid) throw new Error(result.error);
     const promo = calculatePromotion(
       result.recommendedPrice,
       Number(form.get('promotionPercent')),
@@ -2732,6 +2654,12 @@ function ProductsView() {
         name: String(form.get('name')),
         size: String(form.get('size')),
         recipe: String(form.get('recipe')),
+        recipeId: recipes.items.find(r => r.name === String(form.get('recipe')))?.id,
+        packagingId: Number(form.get('packagingId')) || undefined,
+        targetMarginPercent: margin,
+        flavor: String(form.get('flavor') || ''),
+        channel: String(form.get('channel') || ''),
+        weightOrVolume: Number(form.get('weightOrVolume') || 0),
         ingredientsCost,
         packagingCost: packageCost,
         extras,
@@ -2780,7 +2708,7 @@ function ProductsView() {
         >
           <form
             key={editing?.id || 'new'}
-            onSubmit={submit}
+            onSubmit={async event => { try { await submit(event); } catch (error) { reportOperation(error instanceof Error ? error.message : 'Não foi possível salvar. Tente novamente.', true); } }}
             className="data-form"
           >
             <div className="form-row">
@@ -2798,6 +2726,11 @@ function ProductsView() {
                 />
               </label>
             </div>
+            <details className="form-details"><summary>Sabor, peso e canal</summary>
+              <label>Sabor<input name="flavor" defaultValue={editing?.flavor} /></label>
+              <label>Peso ou volume por unidade<input name="weightOrVolume" type="number" min="0" step="0.01" defaultValue={editing?.weightOrVolume || 0} /></label>
+              <label>Canal de venda<input name="channel" defaultValue={editing?.channel} placeholder="Balcão, WhatsApp, marketplace..." /></label>
+            </details>
             <label>
               Receita base
               <select
@@ -2822,7 +2755,8 @@ function ProductsView() {
             <label>
               Embalagem cadastrada
               <select
-                defaultValue=""
+                name="packagingId"
+                defaultValue={editing?.packagingId || ""}
                 onChange={(event) => {
                   const item = packaging.items.find(
                     (candidate) => candidate.id === Number(event.target.value),
@@ -3273,7 +3207,7 @@ function SalesView() {
         >
           <form
             key={editing?.id || 'new'}
-            onSubmit={submit}
+            onSubmit={async event => { try { await submit(event); } catch (error) { reportOperation(error instanceof Error ? error.message : 'Não foi possível salvar. Tente novamente.', true); } }}
             className="data-form"
           >
             <label>
@@ -3748,10 +3682,12 @@ function EditorPanel({
   );
 }
 function SaveButton({ editing }: { editing: boolean }) {
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { const update = (event: Event) => setBusy((event as CustomEvent).detail.status === 'Salvando...'); window.addEventListener('dm:operation', update); return () => window.removeEventListener('dm:operation', update); }, []);
   return (
-    <Button type="submit" className="form-submit">
+    <Button type="submit" className="form-submit" disabled={busy || currentRole === 'viewer'}>
       {editing ? <Pencil size={16} /> : <Plus size={16} />}
-      {editing ? 'Salvar alterações' : 'Salvar registro'}
+      {busy ? 'Salvando...' : editing ? 'Salvar alterações' : 'Salvar registro'}
     </Button>
   );
 }
@@ -4157,7 +4093,7 @@ function SimulatorView() {
   const [fixedIncluded, setFixedIncluded] = useState(false);
   const expenses = useRecords<Expense>('expense');
   const monthlyFixed = expenses.items.reduce(
-    (sum, item) => sum + item.value,
+    (sum, item) => sum + (item.type === 'one_off' ? 0 : item.value),
     0,
   );
   const fixedUnit = fixedIncluded
@@ -4196,6 +4132,7 @@ function SimulatorView() {
         title="Simulador"
         subtitle="Teste seus números reais sem alterar os produtos cadastrados."
       />
+      {!pricing.valid && <p role="alert" className="form-error">{pricing.error}</p>}
       <div className="simulator-layout">
         <section className="panel simulator-controls">
           <div className="panel-header">
@@ -4420,7 +4357,7 @@ function ReportsView() {
 
   function isDateInPeriod(dateStr?: string) {
     if (period === 'all') return true;
-    if (!dateStr) return period === 'this_month' || period === 'all';
+    if (!dateStr) return period === 'this_month';
     const d = new Date(`${dateStr.slice(0, 10)}T12:00:00`);
     const now = new Date();
     const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());

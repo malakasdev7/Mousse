@@ -28,6 +28,8 @@ export type PricingResult = {
   netMarginPercent: number;
   cmvPercent: number;
   markup: number;
+  valid: boolean;
+  error?: string;
 };
 
 const finiteNonNegative = (value = 0) =>
@@ -67,6 +69,8 @@ export function calculatePricing(input: PricingInput): PricingResult {
   const estimatedProfit = price - totalCostBeforeRates - rateCost;
 
   return {
+    valid: recommendedDenominator > 0,
+    error: recommendedDenominator > 0 ? undefined : 'Taxas e margem devem somar menos de 100%.',
     directCost: roundMoney(directCost),
     wasteCost: roundMoney(wasteCost),
     variableCostBeforeRates: roundMoney(variableCostBeforeRates),
@@ -81,7 +85,7 @@ export function calculatePricing(input: PricingInput): PricingResult {
       : 0,
     estimatedProfit: roundMoney(estimatedProfit),
     netMarginPercent: price ? roundMoney((estimatedProfit / price) * 100) : 0,
-    cmvPercent: price ? roundMoney((variableCostBeforeRates / price) * 100) : 0,
+    cmvPercent: price ? roundMoney(((directCost + wasteCost) / price) * 100) : 0,
     markup: totalCostBeforeRates ? roundMoney(price / totalCostBeforeRates) : 0,
   };
 }
@@ -129,6 +133,6 @@ export function ingredientUnitCost(
     finiteNonNegative(purchasedQuantity) *
     (1 - Math.min(percent(wastePercent), 0.99));
   return usableQuantity > 0
-    ? roundMoney(finiteNonNegative(price) / usableQuantity)
+    ? finiteNonNegative(price) / usableQuantity
     : 0;
 }

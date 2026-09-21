@@ -47,3 +47,6 @@ node_modules/
 
 /.sites-runtime/
 /.playwright-mcp/
+*.tsbuildinfo
+/supabase/.temp/
+!.env.example

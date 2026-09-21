@@ -9,8 +9,8 @@ Deno.serve(async (request) => {
   if (request.method !== 'POST') return fail(405);
   const ip = request.headers.get('cf-connecting-ip') ?? request.headers.get('x-forwarded-for')?.split(',')[0] ?? 'unknown';
   const body = await request.json().catch(() => null) as { username?: string; password?: string } | null;
-  const username = body?.username?.trim().toLowerCase() ?? '';
-  const password = body?.password ?? '';
+  const username = typeof body?.username === 'string' ? body.username.trim().toLowerCase() : '';
+  const password = typeof body?.password === 'string' ? body.password : '';
   if (!/^[a-z0-9._-]{3,32}$/.test(username) || password.length < 8 || password.length > 128) return fail();
 
   const url = Deno.env.get('SUPABASE_URL')!;
@@ -20,8 +20,14 @@ Deno.serve(async (request) => {
   const bucket = Math.floor(Date.now() / 300_000);
   const fingerprint = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(`${ip}:${username}:${bucket}:${Deno.env.get('LOGIN_PEPPER') ?? ''}`));
   const attemptKey = Array.from(new Uint8Array(fingerprint)).map(byte => byte.toString(16).padStart(2, '0')).join('');
-  const { data: attempts } = await admin.rpc('register_login_attempt', { attempt_key: attemptKey });
+  const { data: attempts, error: limitError } = await admin.rpc('register_login_attempt', { attempt_key: attemptKey });
+  if (limitError) return fail(503);
   if (Number(attempts) > 8) return fail(429);
+  const accountFingerprint = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(`${username}:${bucket}:${secret}`));
+  const accountKey = Array.from(new Uint8Array(accountFingerprint)).map(byte => byte.toString(16).padStart(2, '0')).join('');
+  const { data: accountAttempts, error: accountLimitError } = await admin.rpc('register_login_attempt', { attempt_key: accountKey });
+  if (accountLimitError) return fail(503);
+  if (Number(accountAttempts) > 12) return fail(429);
   const { data: profile } = await admin.from('profiles').select('internal_email').eq('username_normalized', username).maybeSingle();
   if (!profile?.internal_email) { await new Promise(resolve => setTimeout(resolve, 250)); return fail(); }
   const client = createClient(url, publishable, { auth: { persistSession: false } });
