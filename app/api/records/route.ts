@@ -51,6 +51,9 @@ async function handle(request: Request) {
       if (!current) return json({ error: 'Registro não encontrado.' }, 404);
     }
     if (request.method === 'DELETE') {
+      if (current?.kind === 'profit_sharing' && ['approved', 'paid', 'paid_partial'].includes(String(current.payload?.status))) {
+        return json({ error: 'Divisões aprovadas ou com pagamentos não podem ser excluídas permanentemente. Cancele a divisão para preservar a trilha de auditoria.' }, 409);
+      }
       const rows = await readAll(token, user.storeId);
       const used = rows.some(row => row.id !== body.id && (
         row.payload.recipeId === body.id || row.payload.packagingId === body.id || row.payload.productId === body.id ||
@@ -66,6 +69,21 @@ async function handle(request: Request) {
     if (!isRecordKind(kind)) return json({ error: 'Tipo de registro inválido.' }, 422);
     const valid = validatePayload(kind, { ...current?.payload, ...body.payload });
     if (!valid.ok) return json({ error: valid.error }, 422);
+    if (kind === 'profit_sharing') {
+      const targetStatus = String(valid.value.status || 'draft');
+      if (['approved', 'paid', 'paid_partial', 'cancelled'].includes(targetStatus) && user.role !== 'admin') {
+        return json({ error: 'Apenas administradores podem aprovar, registrar pagamentos ou cancelar divisões de resultados.' }, 403);
+      }
+      const trail = Array.isArray(valid.value.auditTrail) ? [...valid.value.auditTrail] : [];
+      trail.push({
+        action: request.method === 'POST' ? 'created' : (targetStatus !== current?.payload?.status ? targetStatus : 'updated'),
+        actorId: user.id,
+        actorName: user.name,
+        timestamp: new Date().toISOString(),
+        details: `Registro processado por ${user.name} (${user.role})`,
+      });
+      valid.value.auditTrail = trail;
+    }
     if (kind === 'recipe' || kind === 'product') {
       const rows = await readAll(token, user.storeId);
       const projected = recalculateRecords([...rows.filter(row => row.id !== body.id), { id: body.id || -1, kind, payload: valid.value }]);

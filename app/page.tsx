@@ -67,6 +67,7 @@ import {
   getSupabaseBrowserClient,
   signInWithUsername,
 } from '@/lib/supabase-browser';
+import { ProfitSharingView } from '@/components/profit-sharing-view';
 
 const money = new Intl.NumberFormat('pt-BR', {
   style: 'currency',
@@ -79,7 +80,9 @@ type Kind =
   | 'recipe'
   | 'product'
   | 'sale'
-  | 'settings';
+  | 'settings'
+  | 'profit_sharing'
+  | 'sharing_template';
 type Stored<T> = T & { id: number };
 type ApiRecord<T = Record<string, unknown>> = {
   id: number;
@@ -235,6 +238,8 @@ const kindViews: Record<Kind, string> = {
   product: 'Produtos',
   sale: 'Vendas',
   settings: 'Caixa',
+  profit_sharing: 'Divisão de resultados',
+  sharing_template: 'Modelos de partilha',
 };
 
 const nav = [
@@ -245,6 +250,7 @@ const nav = [
   { label: 'Produtos', icon: UtensilsCrossed },
   { label: 'Vendas', icon: ShoppingCart },
   { label: 'Caixa', icon: Banknote },
+  { label: 'Divisão de resultados', icon: CircleDollarSign },
   { label: 'Despesas', icon: WalletCards },
   { label: 'Simulador', icon: Calculator },
   { label: 'Relatórios', icon: FileText },
@@ -846,7 +852,18 @@ export default function Home() {
               onNavigate={switchView}
             />
           ) : (
-            <ModuleRouter view={activeView} user={user} onLogout={logout} />
+            <ModuleRouter
+              view={activeView}
+              user={user}
+              onLogout={logout}
+              allRecords={allRecords}
+              onReload={async () => {
+                const fresh = await requestRecords(true);
+                setAllRecords(fresh);
+              }}
+              onNavigate={switchView}
+              onReportOperation={reportOperation}
+            />
           )}
         </div>
       </section>
@@ -1300,10 +1317,18 @@ function ModuleRouter({
   view,
   user,
   onLogout,
+  allRecords,
+  onReload,
+  onNavigate,
+  onReportOperation,
 }: {
   view: string;
   user: CurrentUser;
   onLogout: () => Promise<void>;
+  allRecords: ApiRecord[];
+  onReload: () => Promise<void>;
+  onNavigate: (view: string) => void;
+  onReportOperation: (status: string, error?: boolean) => void;
 }) {
   if (view === 'Ingredientes') return <IngredientsView />;
   if (view === 'Embalagens') return <PackagingView />;
@@ -1311,14 +1336,24 @@ function ModuleRouter({
   if (view === 'Receitas') return <RecipesView />;
   if (view === 'Produtos') return <ProductsView />;
   if (view === 'Vendas') return <SalesView />;
-  if (view === 'Caixa') return <CashView />;
+  if (view === 'Caixa') return <CashView onNavigate={onNavigate} />;
+  if (view === 'Divisão de resultados')
+    return (
+      <ProfitSharingView
+        user={user}
+        allRecords={allRecords}
+        onReload={onReload}
+        onNavigate={onNavigate}
+        onReportOperation={onReportOperation}
+      />
+    );
   if (view === 'Simulador') return <SimulatorView />;
   if (view === 'Minha conta')
     return <AccountView user={user} onLogout={onLogout} />;
   return <ReportsView />;
 }
 
-function CashView() {
+function CashView({ onNavigate }: { onNavigate?: (view: string) => void }) {
   const records = useRecords<CashSettings>('settings');
   const cash = records.items.find((item) => item.name === 'Caixa');
   const [saved, setSaved] = useState(false);
@@ -1397,6 +1432,17 @@ function CashView() {
                 : 'Nenhum saldo foi informado ainda.'}
             </p>
             {cash?.notes && <small>{cash.notes}</small>}
+            {onNavigate && (
+              <div style={{ marginTop: '1.25rem' }}>
+                <Button
+                  onClick={() => onNavigate('Divisão de resultados')}
+                  className="primary-action"
+                  style={{ display: 'inline-flex', gap: '0.4rem', alignItems: 'center' }}
+                >
+                  <CircleDollarSign size={16} /> Simular Divisão de Resultados
+                </Button>
+              </div>
+            )}
           </div>
         </section>
       </div>

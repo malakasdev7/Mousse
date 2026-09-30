@@ -8,6 +8,8 @@ export const recordKinds = [
   'supplier',
   'scenario',
   'settings',
+  'profit_sharing',
+  'sharing_template',
 ] as const;
 export type RecordKind = (typeof recordKinds)[number];
 
@@ -31,7 +33,7 @@ export function validatePayload(
       error: 'Informe um nome válido com até 120 caracteres.',
     };
   const serialized = JSON.stringify(value);
-  if (serialized.length > 50_000)
+  if (serialized.length > 100_000)
     return { ok: false, error: 'Registro muito grande.' };
   for (const [key, field] of Object.entries(value)) {
     if (typeof field === 'number' && !Number.isFinite(field))
@@ -41,7 +43,7 @@ export function validatePayload(
       };
     if (
       typeof field === 'string' &&
-      field.length > (['notes', 'instructions', 'costError'].includes(key) ? limits.notes : limits.short) &&
+      field.length > (['notes', 'instructions', 'costError', 'description', 'unreliableReason', 'cancelledReason', 'pennyAdjustmentNote', 'details'].includes(key) ? limits.notes : limits.short) &&
       key !== 'name'
     )
       return { ok: false, error: `O campo ${key} excede o tamanho permitido.` };
@@ -51,13 +53,30 @@ export function validatePayload(
       ok: false,
       error: 'O rendimento da receita deve ser maior que zero.',
     };
-  const nonnegative = ['price','qty','pack','stock','minStock','yieldQty','waste','wastePercent','quantity','unitPrice','discount','fee','deliveryCost','ingredientsCost','packagingCost','labor','extras','fees','fixedAllocation','totalWeight','totalVolume','additionalCost','wholesalePrice','balance'];
+  const nonnegative = [
+    'price','qty','pack','stock','minStock','yieldQty','waste','wastePercent',
+    'quantity','unitPrice','discount','fee','deliveryCost','ingredientsCost',
+    'packagingCost','labor','extras','fees','fixedAllocation','totalWeight',
+    'totalVolume','additionalCost','wholesalePrice','balance',
+    'targetAmount','totalDistributed','unallocatedAmount',
+    'workingCapitalReserve','additionalReserve'
+  ];
   for (const key of nonnegative) {
     if (value[key] !== undefined && (typeof value[key] !== 'number' || !Number.isFinite(value[key]) || Number(value[key]) < 0)) return { ok: false, error: `Informe um valor não negativo para ${key}.` };
   }
   if (kind === 'ingredient' && (!(Number(value.qty) > 0) || typeof value.price !== 'number' || !['g','kg','ml','l','un'].includes(String(value.baseUnit)))) return { ok: false, error: 'Informe quantidade útil, preço e unidade (g, kg, ml, l ou un).' };
   if (kind === 'packaging' && (!(Number(value.pack) > 0) || typeof value.price !== 'number')) return { ok: false, error: 'Informe quantidade e preço da embalagem.' };
   if (kind === 'sale' && !(Number(value.quantity) > 0)) return { ok: false, error: 'A quantidade vendida deve ser maior que zero.' };
+  if (kind === 'profit_sharing') {
+    if (!Array.isArray(value.participants) || value.participants.length === 0) {
+      return { ok: false, error: 'A divisão deve conter ao menos um participante.' };
+    }
+  }
+  if (kind === 'sharing_template') {
+    if (!Array.isArray(value.participants) || value.participants.length === 0) {
+      return { ok: false, error: 'O modelo deve conter ao menos um participante.' };
+    }
+  }
   for (const key of ['waste','wastePercent','taxPercent','cardPercent','marketplacePercent','commissionPercent','targetMarginPercent']) {
     if (value[key] !== undefined && (typeof value[key] !== 'number' || Number(value[key]) < 0 || Number(value[key]) >= 100)) return { ok: false, error: `O percentual ${key} deve estar entre 0 e menos de 100.` };
   }
