@@ -51,7 +51,8 @@ async function handle(request: Request) {
       if (!current) return json({ error: 'Registro não encontrado.' }, 404);
     }
     if (request.method === 'DELETE') {
-      if (current?.kind === 'profit_sharing' && ['approved', 'paid', 'paid_partial'].includes(String(current.payload?.status))) {
+      const currentStatus = typeof current?.payload?.status === 'string' ? current.payload.status : '';
+      if (current?.kind === 'profit_sharing' && ['approved', 'paid', 'paid_partial'].includes(currentStatus)) {
         return json({ error: 'Divisões aprovadas ou com pagamentos não podem ser excluídas permanentemente. Cancele a divisão para preservar a trilha de auditoria.' }, 409);
       }
       const rows = await readAll(token, user.storeId);
@@ -70,7 +71,7 @@ async function handle(request: Request) {
     const valid = validatePayload(kind, { ...current?.payload, ...body.payload });
     if (!valid.ok) return json({ error: valid.error }, 422);
     if (kind === 'profit_sharing') {
-      const targetStatus = String(valid.value.status || 'draft');
+      const targetStatus = typeof valid.value.status === 'string' ? valid.value.status : 'draft';
       if (['approved', 'paid', 'paid_partial', 'cancelled'].includes(targetStatus) && user.role !== 'admin') {
         return json({ error: 'Apenas administradores podem aprovar, registrar pagamentos ou cancelar divisões de resultados.' }, 403);
       }

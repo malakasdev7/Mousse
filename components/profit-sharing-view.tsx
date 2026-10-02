@@ -1,28 +1,18 @@
 'use client';
 
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
-  Banknote,
   AlertTriangle,
   CheckCircle2,
-  Calendar,
-  Users,
   ShieldAlert,
-  ArrowRight,
   Plus,
   Trash2,
   Download,
   Printer,
   Sparkles,
   Info,
-  Clock,
-  Check,
-  X,
   FileText,
   DollarSign,
-  TrendingUp,
-  Percent,
-  PieChart,
   Lock,
   Layers,
   Save,
@@ -72,7 +62,7 @@ type Props = {
   user: CurrentUser;
   allRecords: ApiRecord[];
   onReload: () => Promise<void>;
-  onNavigate: (view: string) => void;
+  onNavigate?: (view: string) => void;
   onReportOperation: (status: string, error?: boolean) => void;
 };
 
@@ -80,7 +70,7 @@ export function ProfitSharingView({
   user,
   allRecords,
   onReload,
-  onNavigate,
+  onNavigate: _onNavigate,
   onReportOperation,
 }: Props) {
   const [activeTab, setActiveTab] = useState<'simulate' | 'history' | 'templates'>('simulate');
@@ -161,25 +151,50 @@ export function ProfitSharingView({
   const [historyStatusFilter, setHistoryStatusFilter] = useState<string>('all');
   const [historySearch, setHistorySearch] = useState<string>('');
 
+type CashPayload = {
+  name?: string;
+  balance?: number;
+  checkedAt?: string;
+  notes?: string;
+};
+
+type SalePayload = {
+  date?: string;
+  netRevenue?: number;
+  gross?: number;
+  cost?: number;
+  profit?: number;
+  status?: string;
+};
+
+type ExpensePayload = {
+  type?: 'monthly' | 'one_off';
+  date?: string;
+  value?: number;
+  dueDay?: string;
+  category?: string;
+};
+
   // 1. Extrair registros do SaaS
   const cashRecord = useMemo(() => {
-    return allRecords.find((r) => r.kind === 'settings' && (r.payload as any).name === 'Caixa');
+    return allRecords.find((r) => r.kind === 'settings' && (r.payload as CashPayload).name === 'Caixa');
   }, [allRecords]);
 
-  const cashBalance = Number((cashRecord?.payload as any)?.balance || 0);
-  const cashCheckedAt = (cashRecord?.payload as any)?.checkedAt as string | undefined;
+  const cashPayload = cashRecord ? (cashRecord.payload as CashPayload) : undefined;
+  const cashBalance = Number(cashPayload?.balance || 0);
+  const cashCheckedAt = cashPayload?.checkedAt;
 
   const sales = useMemo(() => {
     return allRecords
       .filter((r) => r.kind === 'sale')
-      .map((r) => r.payload as any)
+      .map((r) => r.payload as SalePayload)
       .filter((s) => s.status !== 'Cancelada');
   }, [allRecords]);
 
   const expenses = useMemo(() => {
     return allRecords
       .filter((r) => r.kind === 'expense')
-      .map((r) => r.payload as any);
+      .map((r) => r.payload as ExpensePayload);
   }, [allRecords]);
 
   const existingDivisions = useMemo(() => {
@@ -257,12 +272,11 @@ export function ProfitSharingView({
     editingDivisionId,
   ]);
 
-  // Se o lucro não foi apurado, forçar categoria não-lucro
-  useEffect(() => {
-    if (!financialSnapshot.isProfitReliable && category === 'distribuicao_lucros') {
-      setCategory('retirada_caixa');
-    }
-  }, [financialSnapshot.isProfitReliable, category]);
+  // Categoria efetiva: se lucro não apurado, restringe a retirada de caixa (simulação)
+  const effectiveCategory: WithdrawalCategory =
+    !financialSnapshot.isProfitReliable && category === 'distribuicao_lucros'
+      ? 'retirada_caixa'
+      : category;
 
   // 3. Cálculo da Divisão
   const calculationResult = useMemo(() => {
@@ -272,12 +286,12 @@ export function ProfitSharingView({
   // 4. Validação de Limites e Compliance
   const limitsValidation = useMemo(() => {
     return validateProfitSharingLimits(
-      category,
+      effectiveCategory,
       targetAmount,
       calculationResult.participants,
       financialSnapshot,
     );
-  }, [category, targetAmount, calculationResult.participants, financialSnapshot]);
+  }, [effectiveCategory, targetAmount, calculationResult.participants, financialSnapshot]);
 
   // Helper para adicionar participante
   const addParticipant = () => {
@@ -285,8 +299,8 @@ export function ProfitSharingView({
     const newPart = {
       id: `part-${Date.now()}-${nextIdx}`,
       name: `Participante ${nextIdx}`,
-      beneficiaryType: (category === 'distribuicao_lucros' || category === 'pro_labore' ? 'socio' : 'outro') as BeneficiaryType,
-      companyRole: category === 'distribuicao_lucros' ? 'Sócio Cotista' : 'Colaborador',
+      beneficiaryType: (effectiveCategory === 'distribuicao_lucros' || effectiveCategory === 'pro_labore' ? 'socio' : 'outro') as BeneficiaryType,
+      companyRole: effectiveCategory === 'distribuicao_lucros' ? 'Sócio Cotista' : 'Colaborador',
       percentage: 0,
       shares: 1,
       customValue: 0,
@@ -363,8 +377,8 @@ export function ProfitSharingView({
 
       await onReload();
       onReportOperation('Modelo salvo com sucesso!');
-    } catch (err: any) {
-      onReportOperation(err.message || 'Falha ao salvar modelo.', true);
+    } catch (err: unknown) {
+      onReportOperation(err instanceof Error ? err.message : 'Falha ao salvar modelo.', true);
     }
   };
 
@@ -399,7 +413,7 @@ export function ProfitSharingView({
         periodEnd,
         storeId: user.storeId,
         storeName: user.companyName,
-        category,
+        category: effectiveCategory,
         rule,
         targetAmount,
         totalDistributed: calculationResult.totalDistributed,
@@ -453,8 +467,8 @@ export function ProfitSharingView({
       );
       setEditingDivisionId(null);
       setActiveTab('history');
-    } catch (err: any) {
-      onReportOperation(err.message || 'Falha ao salvar divisão.', true);
+    } catch (err: unknown) {
+      onReportOperation(err instanceof Error ? err.message : 'Falha ao salvar divisão.', true);
     }
   };
 
@@ -550,7 +564,8 @@ export function ProfitSharingView({
 
       // 2. Atualizar o caixa real (deduzindo o valor pago do saldo real)
       if (cashRecord) {
-        const currentBalance = Number((cashRecord.payload as any).balance || 0);
+        const cashPayloadData = cashRecord.payload as CashPayload;
+        const currentBalance = Number(cashPayloadData?.balance || 0);
         const newBalance = roundCents(Math.max(0, currentBalance - amountToPay));
 
         await authenticatedFetch('/api/records', {
@@ -559,7 +574,7 @@ export function ProfitSharingView({
           body: JSON.stringify({
             id: cashRecord.id,
             payload: {
-              ...(cashRecord.payload as any),
+              ...cashPayloadData,
               balance: newBalance,
               checkedAt: paymentDate,
               notes: `Baixa de divisão de resultados (${participant.name} - ${money.format(amountToPay)})`,
@@ -571,8 +586,8 @@ export function ProfitSharingView({
       await onReload();
       onReportOperation(`Pagamento de ${money.format(amountToPay)} registrado com sucesso e deduzido do caixa!`);
       setPaymentModalData(null);
-    } catch (err: any) {
-      onReportOperation(err.message || 'Falha ao processar pagamento.', true);
+    } catch (err: unknown) {
+      onReportOperation(err instanceof Error ? err.message : 'Falha ao processar pagamento.', true);
     } finally {
       setIsProcessingPayment(false);
     }
@@ -635,8 +650,8 @@ export function ProfitSharingView({
       onReportOperation('Divisão cancelada. Os valores comprometidos foram liberados.');
       setCancellationModalDivision(null);
       setCancelReason('');
-    } catch (err: any) {
-      onReportOperation(err.message || 'Falha ao cancelar divisão.', true);
+    } catch (err: unknown) {
+      onReportOperation(err instanceof Error ? err.message : 'Falha ao cancelar divisão.', true);
     } finally {
       setIsCancelling(false);
     }
@@ -1197,7 +1212,7 @@ export function ProfitSharingView({
                 <label>
                   <span>Classificação da Operação</span>
                   <select
-                    value={category}
+                    value={effectiveCategory}
                     onChange={(e) => setCategory(e.target.value as WithdrawalCategory)}
                     style={{ fontWeight: 600 }}
                   >
@@ -1231,12 +1246,12 @@ export function ProfitSharingView({
                   }}
                 >
                   <p style={{ margin: 0, fontWeight: 600, color: 'var(--primary)' }}>
-                    {CATEGORY_LABELS[category].label}
+                    {CATEGORY_LABELS[effectiveCategory].label}
                   </p>
                   <p style={{ margin: '0.25rem 0 0 0', color: 'var(--muted-foreground)' }}>
-                    {CATEGORY_LABELS[category].desc}
+                    {CATEGORY_LABELS[effectiveCategory].desc}
                   </p>
-                  {category === 'retirada_caixa' && !financialSnapshot.isProfitReliable && (
+                  {effectiveCategory === 'retirada_caixa' && !financialSnapshot.isProfitReliable && (
                     <div style={{ marginTop: '0.5rem', color: '#f59e0b', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
                       <AlertTriangle size={14} />
                       Simulação identificada estritamente como retirada de caixa (sem classificação de lucros).
@@ -1246,12 +1261,10 @@ export function ProfitSharingView({
 
                 {/* Valor Total a Dividir */}
                 <label>
-                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                    <span>Valor Escolhido para Divisão (R$)</span>
-                    <span style={{ fontSize: '0.78rem', color: 'var(--muted-foreground)' }}>
-                      Máx. recomendado: {money.format(financialSnapshot.effectiveLimit)}
-                    </span>
-                  </div>
+                  Valor Escolhido para Divisão (R$)
+                  <span style={{ fontSize: '0.78rem', color: 'var(--muted-foreground)', display: 'block', margin: '0.2rem 0 0.35rem 0' }}>
+                    Máx. recomendado: {money.format(financialSnapshot.effectiveLimit)}
+                  </span>
                   <input
                     type="number"
                     min="0"
@@ -1703,7 +1716,21 @@ export function ProfitSharingView({
               ))}
             </div>
 
-            <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
+              <input
+                type="search"
+                value={historySearch}
+                onChange={(e) => setHistorySearch(e.target.value)}
+                placeholder="Buscar divisão ou participante..."
+                style={{
+                  padding: '0.35rem 0.6rem',
+                  fontSize: '0.8rem',
+                  borderRadius: '0.4rem',
+                  border: '1px solid var(--border)',
+                  background: 'var(--card)',
+                  minWidth: '200px',
+                }}
+              />
               <Button onClick={exportHistoryCsv} variant="outline" className="button-secondary">
                 <Download size={15} /> Exportar (.csv)
               </Button>
@@ -1721,7 +1748,7 @@ export function ProfitSharingView({
                 Nenhuma divisão de resultados registrada ainda
               </h3>
               <p style={{ fontSize: '0.85rem', maxWidth: '400px', margin: '0.5rem auto 1.5rem auto' }}>
-                Crie simulações na aba "Simular & Nova Divisão" para planejar retiradas com segurança financeira.
+                Crie simulações na aba &ldquo;Simular &amp; Nova Divisão&rdquo; para planejar retiradas com segurança financeira.
               </p>
               <Button onClick={() => setActiveTab('simulate')} className="primary-action">
                 <Sparkles size={16} /> Criar Primeira Simulação
@@ -1730,7 +1757,18 @@ export function ProfitSharingView({
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
               {existingDivisions
-                .filter((d) => (historyStatusFilter === 'all' ? true : d.payload.status === historyStatusFilter))
+                .filter((d) => {
+                  if (historyStatusFilter !== 'all' && d.payload.status !== historyStatusFilter) return false;
+                  if (historySearch.trim()) {
+                    const q = historySearch.toLowerCase();
+                    const matchName = d.payload.name.toLowerCase().includes(q);
+                    const matchParticipant = d.payload.participants.some(
+                      (p) => p.name.toLowerCase().includes(q) || p.companyRole.toLowerCase().includes(q),
+                    );
+                    return matchName || matchParticipant;
+                  }
+                  return true;
+                })
                 .map((division) => {
                   const pStatusCounts = {
                     total: division.payload.participants.length,
@@ -2026,7 +2064,7 @@ export function ProfitSharingView({
               <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--muted-foreground)' }}>
                 <p>Nenhum modelo salvo ainda.</p>
                 <small>
-                  Você pode configurar participantes na aba "Simular & Nova Divisão" e clicar em "Salvar Modelo".
+                  Você pode configurar participantes na aba &ldquo;Simular &amp; Nova Divisão&rdquo; e clicar em &ldquo;Salvar Modelo&rdquo;.
                 </small>
               </div>
             ) : (

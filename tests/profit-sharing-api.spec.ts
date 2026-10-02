@@ -1,28 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { POST, PUT, DELETE, GET } from '../app/api/records/route';
 import { validatePayload, isRecordKind } from '../lib/records';
-
-// Simulação de sessão e requisição autenticada
-function makeRequest(
-  method: 'GET' | 'POST' | 'PUT' | 'DELETE',
-  body?: unknown,
-  role: 'admin' | 'employee' | 'viewer' = 'admin',
-  storeId = 'store-mousse-1',
-) {
-  const headers = new Headers();
-  headers.set('content-type', 'application/json');
-  headers.set('origin', 'http://localhost:3000');
-  headers.set('idempotency-key', '12345678-1234-1234-1234-1234567890ab');
-  headers.set('authorization', 'Bearer valid-test-token');
-
-  const req = new Request('http://localhost:3000/api/records', {
-    method,
-    headers,
-    body: body ? JSON.stringify(body) : undefined,
-  });
-
-  return req;
-}
 
 test.describe('API de Records - Divisão de Resultados & Segurança Multi-Tenant', () => {
   test('Reconhece profit_sharing e sharing_template como tipos válidos de registro', () => {
@@ -38,7 +15,9 @@ test.describe('API de Records - Divisão de Resultados & Segurança Multi-Tenant
       participants: [],
     });
     expect(invalidNoParticipants.ok).toBe(false);
-    expect(invalidNoParticipants.error).toContain('ao menos um participante');
+    if (!invalidNoParticipants.ok) {
+      expect(invalidNoParticipants.error).toContain('ao menos um participante');
+    }
 
     const validDivision = validatePayload('profit_sharing', {
       name: 'Divisão Válida',
@@ -89,4 +68,39 @@ test.describe('API de Records - Divisão de Resultados & Segurança Multi-Tenant
     });
     expect(validTemplate.ok).toBe(true);
   });
+
+  test('Rejeita requisições não autenticadas ou com token inválido com 401', async ({ request }) => {
+    const res = await request.post('http://localhost:3000/api/records', {
+      headers: {
+        'idempotency-key': '12345678-1234-1234-1234-1234567890ab',
+      },
+      data: {
+        kind: 'profit_sharing',
+        payload: {
+          name: 'Divisão Não Autorizada',
+          participants: [{ name: 'Intruso', beneficiaryType: 'socio', companyRole: 'Sócio', calculatedAmount: 100 }],
+        },
+      },
+    });
+
+    expect(res.status()).toBe(401);
+    const body = await res.json();
+    expect(body.error).toContain('Sessão expirada');
+  });
+
+  test('Bloqueia origens externas inválidas com 403 (proteção CSRF)', async ({ request }) => {
+    const res = await request.post('http://localhost:3000/api/records', {
+      headers: {
+        origin: 'http://malicious-site.com',
+        authorization: 'Bearer valid-test-token',
+        'idempotency-key': '12345678-1234-1234-1234-1234567890ab',
+      },
+      data: { kind: 'profit_sharing' },
+    });
+
+    expect(res.status()).toBe(403);
+    const body = await res.json();
+    expect(body.error).toContain('Origem inválida');
+  });
 });
+

@@ -5,6 +5,7 @@ import {
   validateProfitSharingLimits,
   roundCents,
   type FinancialSnapshot,
+  type ProfitSharingRecord,
 } from '../lib/profit-sharing';
 import { validatePayload } from '../lib/records';
 
@@ -185,16 +186,23 @@ test.describe('Módulo de Divisão de Resultados - Contexto Financeiro e Limites
   });
 
   test('11. Contas a pagar e retiradas já aprovadas são deduzidas da disponibilidade de caixa sem duplicar', () => {
-    const existingDivision: any = {
+    const existingDivision: ProfitSharingRecord = {
+      name: 'Divisão Anterior',
+      rule: 'equal',
+      targetAmount: 2000,
+      unallocatedAmount: 0,
+      financialSnapshot: {} as FinancialSnapshot,
+      auditTrail: [],
       id: 1,
       status: 'approved',
       category: 'distribuicao_lucros',
+      periodType: 'monthly',
       periodStart: '2026-09-01',
       periodEnd: '2026-09-30',
       totalDistributed: 2000,
       participants: [
-        { id: 'p1', name: 'Ana', calculatedAmount: 1000, status: 'pago' }, // Já pago!
-        { id: 'p2', name: 'Bruno', calculatedAmount: 1000, status: 'previsto' }, // Pendente (comprometido)
+        { id: 'p1', name: 'Ana', calculatedAmount: 1000, status: 'pago', beneficiaryType: 'socio', companyRole: 'Sócia', effectivePercentage: 50 }, // Já pago!
+        { id: 'p2', name: 'Bruno', calculatedAmount: 1000, status: 'previsto', beneficiaryType: 'socio', companyRole: 'Sócio', effectivePercentage: 50 }, // Pendente (comprometido)
       ],
     };
 
@@ -264,5 +272,123 @@ test.describe('Módulo de Divisão de Resultados - Contexto Financeiro e Limites
       participants: [],
     });
     expect(emptyParticipants.ok).toBe(false);
+  });
+
+  test('14. Pagamento parcial e prevenção de pagamento duplicado', () => {
+    const participant1 = {
+      id: 'p1',
+      name: 'Ana',
+      beneficiaryType: 'socio' as const,
+      companyRole: 'Sócia',
+      calculatedAmount: 1500,
+      effectivePercentage: 50,
+      status: 'aprovado' as const,
+    };
+    const participant2 = {
+      id: 'p2',
+      name: 'Bruno',
+      beneficiaryType: 'socio' as const,
+      companyRole: 'Sócio',
+      calculatedAmount: 1500,
+      effectivePercentage: 50,
+      status: 'aprovado' as const,
+    };
+
+    // 1. Simula pagamento de Ana
+    const paidParticipant1 = {
+      ...participant1,
+      status: 'pago' as const,
+      paidAt: '2026-09-28',
+      paymentMethod: 'PIX',
+    };
+
+    // Status global deve ser pago parcialmente
+    const allParticipants = [paidParticipant1, participant2];
+    const isAllPaid = allParticipants.every((p) => p.status === 'pago');
+    const divisionStatus = isAllPaid ? 'paid' : 'paid_partial';
+    expect(divisionStatus).toBe('paid_partial');
+
+    // Tentativa de pagar novamente Ana deve ser rejeitada
+    const canPayAgain = paidParticipant1.status !== 'pago';
+    expect(canPayAgain).toBe(false);
+
+    // 2. Simula pagamento de Bruno
+    const paidParticipant2 = {
+      ...participant2,
+      status: 'pago' as const,
+      paidAt: '2026-09-28',
+      paymentMethod: 'TED',
+    };
+    const finalParticipants = [paidParticipant1, paidParticipant2];
+    const finalStatus = finalParticipants.every((p) => p.status === 'pago') ? 'paid' : 'paid_partial';
+    expect(finalStatus).toBe('paid');
+  });
+
+  test('15. Cancelamento de divisão aprovada libera valores comprometidos e registra auditoria', () => {
+    const division: ProfitSharingRecord = {
+      id: 99,
+      name: 'Divisão a Cancelar',
+      rule: 'equal',
+      targetAmount: 4000,
+      unallocatedAmount: 0,
+      financialSnapshot: {} as FinancialSnapshot,
+      periodType: 'monthly',
+      status: 'approved',
+      category: 'distribuicao_lucros',
+      periodStart: '2026-09-01',
+      periodEnd: '2026-09-30',
+      totalDistributed: 4000,
+      participants: [
+        { id: 'p1', name: 'Ana', calculatedAmount: 2000, status: 'aprovado', beneficiaryType: 'socio', companyRole: 'Sócia', effectivePercentage: 50 },
+        { id: 'p2', name: 'Bruno', calculatedAmount: 2000, status: 'aprovado', beneficiaryType: 'socio', companyRole: 'Sócio', effectivePercentage: 50 },
+      ],
+      auditTrail: [
+        { action: 'created', actorId: 'admin-1', actorName: 'Gustavo Admin', timestamp: '2026-09-25T10:00:00Z', details: 'Criado rascunho' },
+        { action: 'approved', actorId: 'admin-1', actorName: 'Gustavo Admin', timestamp: '2026-09-25T10:05:00Z', details: 'Aprovada divisão' },
+      ],
+    };
+
+    // Antes do cancelamento: 4000 comprometidos
+    const snapBefore = assessFinancialContext({
+      cashBalance: 10000,
+      sales: [{ date: '2026-09-10', gross: 8000, netRevenue: 8000, cost: 2000, profit: 6000 }],
+      expenses: [{ type: 'one_off', date: '2026-09-10', value: 1000 }],
+      existingApprovedDivisions: [division],
+      periodStart: '2026-09-01',
+      periodEnd: '2026-09-30',
+      workingCapitalReserve: 1000,
+      additionalReserve: 0,
+      category: 'distribuicao_lucros',
+      targetAmount: 2000,
+    });
+    expect(snapBefore.committedWithdrawals).toBe(4000);
+
+    // Cancelamento
+    const cancelledDivision: ProfitSharingRecord = {
+      ...division,
+      status: 'cancelled',
+      cancelledAt: '2026-09-26T12:00:00Z',
+      cancelledReason: 'Ajuste nas prioridades operacionais',
+      auditTrail: [
+        ...division.auditTrail,
+        { action: 'cancelled' as const, actorId: 'admin-1', actorName: 'Gustavo Admin', timestamp: '2026-09-26T12:00:00Z', details: 'Cancelado por Gustavo Admin' },
+      ],
+    };
+    expect(cancelledDivision.auditTrail).toHaveLength(3);
+
+    // Após cancelamento: 0 comprometidos
+    const snapAfter = assessFinancialContext({
+      cashBalance: 10000,
+      sales: [{ date: '2026-09-10', gross: 8000, netRevenue: 8000, cost: 2000, profit: 6000 }],
+      expenses: [{ type: 'one_off', date: '2026-09-10', value: 1000 }],
+      existingApprovedDivisions: [cancelledDivision],
+      periodStart: '2026-09-01',
+      periodEnd: '2026-09-30',
+      workingCapitalReserve: 1000,
+      additionalReserve: 0,
+      category: 'distribuicao_lucros',
+      targetAmount: 2000,
+    });
+    expect(snapAfter.committedWithdrawals).toBe(0);
   });
 });

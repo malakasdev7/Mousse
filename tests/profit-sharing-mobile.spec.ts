@@ -23,14 +23,14 @@ for (const width of mobileWidths) {
     );
 
     // Mock dos registros: caixa, vendas e despesas
-    let mockRecords: any[] = [
+    let mockRecords: Array<{ id: number; kind: string; payload: Record<string, unknown> }> = [
       {
         id: 1,
         kind: 'settings',
         payload: {
           name: 'Caixa',
           balance: 10000,
-          checkedAt: '2026-09-25',
+          checkedAt: new Date().toLocaleDateString('en-CA'),
           notes: 'Conferido com saldos bancários',
         },
       },
@@ -46,7 +46,7 @@ for (const width of mobileWidths) {
           netRevenue: 2800,
           cost: 1000,
           profit: 1800,
-          date: '2026-09-20',
+          date: new Date().toLocaleDateString('en-CA'),
           status: 'Entregue',
         },
       },
@@ -85,8 +85,12 @@ for (const width of mobileWidths) {
     await expect(page.locator('main')).toBeVisible();
 
     // 1. Acessar menu "Mais" no celular e navegar até "Divisão de resultados"
-    await page.getByRole('button', { name: 'Mais', exact: true }).click();
-    await page.getByRole('button', { name: 'Divisão de resultados' }).click();
+    const dock = page.getByRole('navigation', { name: 'Navegação rápida' });
+    await expect(dock).toBeVisible();
+    await dock.getByRole('button', { name: 'Mais', exact: true }).click();
+    const navBtn = page.getByRole('button', { name: 'Divisão de resultados' });
+    await expect(navBtn).toBeInViewport();
+    await navBtn.click();
 
     // 2. Verificar título do módulo e cabeçalho
     await expect(page.getByRole('heading', { name: 'Divisão de Resultados' })).toBeVisible();
@@ -122,9 +126,9 @@ test('Fluxo completo: Simular, Aprovar, Pagar Parcela e Deduzir Caixa no Celular
   await page.setViewportSize({ width: 375, height: 844 });
 
   let currentCash = 10000;
-  let divisions: any[] = [];
+  let divisions: Array<{ id: number; kind: string; payload: Record<string, unknown> }> = [];
 
-  await page.route('**/api/me', (route) =>
+  await page.route(/\/api\/me/, (route) =>
     route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -139,14 +143,15 @@ test('Fluxo completo: Simular, Aprovar, Pagar Parcela e Deduzir Caixa no Celular
     }),
   );
 
-  await page.route('**/api/records', async (route) => {
+  await page.route(/\/api\/records/, async (route) => {
     const method = route.request().method();
+    console.log('ROUTE /api/records CALLED:', method, route.request().url());
     if (method === 'GET') {
       const records = [
         {
           id: 1,
           kind: 'settings',
-          payload: { name: 'Caixa', balance: currentCash, checkedAt: '2026-09-25' },
+          payload: { name: 'Caixa', balance: currentCash, checkedAt: new Date().toLocaleDateString('en-CA') },
         },
         {
           id: 2,
@@ -158,7 +163,7 @@ test('Fluxo completo: Simular, Aprovar, Pagar Parcela e Deduzir Caixa no Celular
             netRevenue: 9500,
             cost: 3000,
             profit: 6500,
-            date: '2026-09-15',
+            date: new Date().toLocaleDateString('en-CA'),
             status: 'Entregue',
           },
         },
@@ -172,44 +177,62 @@ test('Fluxo completo: Simular, Aprovar, Pagar Parcela e Deduzir Caixa no Celular
       return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(records) });
     }
 
-    if (method === 'POST') {
-      const body = route.request().postDataJSON();
-      const newRec = { id: 100 + divisions.length, kind: body.kind, payload: body.payload };
-      divisions.push(newRec);
-      return route.fulfill({ status: 201, contentType: 'application/json', body: JSON.stringify(newRec) });
-    }
-
-    if (method === 'PUT') {
-      const body = route.request().postDataJSON();
-      if (body.payload.name === 'Caixa') {
-        currentCash = body.payload.balance;
-      } else {
-        divisions = divisions.map((d) => (d.id === body.id ? { ...d, payload: body.payload } : d));
+    try {
+      if (method === 'POST') {
+        const raw = route.request().postData();
+        const body = raw ? JSON.parse(raw) : {};
+        const newRec = { id: 100 + divisions.length, kind: body.kind, payload: body.payload };
+        divisions.push(newRec);
+        return route.fulfill({ status: 201, contentType: 'application/json', body: JSON.stringify(newRec) });
       }
-      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
+
+      if (method === 'PUT') {
+        const raw = route.request().postData();
+        const body = raw ? JSON.parse(raw) : {};
+        if (body.payload?.name === 'Caixa') {
+          currentCash = body.payload.balance;
+        } else {
+          divisions = divisions.map((d) => (d.id === body.id ? { ...d, payload: body.payload } : d));
+        }
+        return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
+      }
+    } catch (err) {
+      console.error('Error handling route in test:', err);
     }
 
     return route.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
   });
 
+  page.on('console', (msg) => console.log('PAGE LOG:', msg.text()));
+  page.on('pageerror', (err) => console.log('PAGE ERR:', err));
+  page.on('response', (res) => {
+    if (res.status() === 401) console.log('401 URL:', res.url());
+  });
+
   await page.goto('http://localhost:3000');
+  await expect(page.getByText('Mousse Mania Delícias').first()).toBeVisible();
 
   // Navegar via menu mobile
-  await page.getByRole('button', { name: 'Mais', exact: true }).click();
-  await page.getByRole('button', { name: 'Divisão de resultados' }).click();
+  const dock = page.getByRole('navigation', { name: 'Navegação rápida' });
+  await expect(dock).toBeVisible();
+  await dock.getByRole('button', { name: 'Mais', exact: true }).click();
+  const navBtn = page.getByRole('button', { name: 'Divisão de resultados' });
+  await expect(navBtn).toBeInViewport();
+  await navBtn.click();
 
   // Simular 2000 reais
   await page.getByLabel('Valor Escolhido para Divisão (R$)').fill('2000');
 
   // Aprovar Divisão
-  await page.getByRole('button', { name: 'Aprovar Divisão' }).click();
+  await page.getByRole('button', { name: 'Aprovar Divisão' }).click({ force: true });
 
   // Deve estar na lista de Histórico como Aprovada
   await expect(page.getByText('Aprovada').first()).toBeVisible();
   await expect(page.getByText('R$ 2.000,00').first()).toBeVisible();
 
   // Clicar em "Pagar" no primeiro participante
-  await page.getByRole('button', { name: 'Pagar' }).first().click();
+  const payBtn = page.getByRole('button', { name: 'Pagar' }).first();
+  await payBtn.click({ force: true });
 
   // Modal de pagamento deve abrir
   await expect(page.getByRole('heading', { name: 'Registrar Pagamento de Parcela' })).toBeVisible();

@@ -79,6 +79,7 @@ export type AuditEvent = {
 };
 
 export type ProfitSharingRecord = {
+  id?: number;
   name: string;
   periodType: 'weekly' | 'monthly' | 'quarterly' | 'custom';
   periodStart: string; // YYYY-MM-DD
@@ -545,7 +546,6 @@ export function assessFinancialContext(params: {
   }
 
   // 4. Apuração de Receitas, Custos e Lucro do Período
-  const grossRevenue = periodSales.reduce((sum, s) => sum + (s.gross || 0), 0);
   const netRevenue = periodSales.reduce((sum, s) => sum + (s.netRevenue || s.gross || 0), 0);
   const totalCpv = periodSales.reduce((sum, s) => sum + (s.cost || 0), 0);
   const totalExpenses = periodExpenses.reduce((sum, e) => sum + (e.value || 0), 0);
@@ -570,7 +570,7 @@ export function assessFinancialContext(params: {
   let committedWithdrawals = 0;
   for (const div of existingApprovedDivisions) {
     // Se for a mesma divisão sendo editada, ignora
-    if (currentDivisionId && (div as any).id === currentDivisionId) continue;
+    if (currentDivisionId && div.id === currentDivisionId) continue;
     if (div.status === 'approved' || div.status === 'paid_partial') {
       const pendingSum = div.participants
         .filter(p => p.status === 'previsto' || p.status === 'aprovado')
@@ -583,7 +583,7 @@ export function assessFinancialContext(params: {
   // 7. Lucros já distribuídos no mesmo período
   let alreadyDistributedInPeriod = 0;
   for (const div of existingApprovedDivisions) {
-    if (currentDivisionId && (div as any).id === currentDivisionId) continue;
+    if (currentDivisionId && div.id === currentDivisionId) continue;
     if (div.category === 'distribuicao_lucros' && div.status !== 'cancelled') {
       if (div.periodStart === periodStart && div.periodEnd === periodEnd) {
         alreadyDistributedInPeriod += div.totalDistributed;
